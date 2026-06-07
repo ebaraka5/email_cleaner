@@ -790,49 +790,78 @@ def logout():
     session.clear()
     return jsonify({"ok": True})
 
+# Folders to skip during scan (bulk/system folders that skew results & are slow)
+SKIP_FOLDER_KEYWORDS = [
+    "trash", "deleted", "junk", "spam", "drafts", "sent",
+    "archive", "all mail", "important", "starred", "bin",
+    "[gmail]", "outbox", "chat", "notes", "scheduled"
+]
+
+def should_skip_folder(name):
+    lower = name.lower()
+    return any(kw in lower for kw in SKIP_FOLDER_KEYWORDS)
+
+def fetch_senders_from_folder(mail, folder, max_emails=2000):
+    """Fetch FROM headers from a folder, newest first, up to max_emails."""
+    sender_counts = {}
+    if not select_folder_readonly(mail, folder):
+        return sender_counts
+
+    status, data = mail.search(None, "ALL")
+    if status != "OK" or not data or not data[0]:
+        return sender_counts
+
+    ids = data[0].split()
+    if not ids:
+        return sender_counts
+
+    # Take only the most recent max_emails (ids are oldest-first, so take from end)
+    ids = ids[-max_emails:]
+
+    # Fetch in chunks of 500 to avoid overwhelming the server
+    CHUNK = 500
+    for i in range(0, len(ids), CHUNK):
+        chunk_ids = ids[i:i+CHUNK]
+        id_set = b",".join(chunk_ids).decode()
+        try:
+            status, msg_data = mail.fetch(id_set, "(BODY.PEEK[HEADER.FIELDS (FROM)])")
+            if status != "OK" or not msg_data:
+                continue
+            for chunk in msg_data:
+                if isinstance(chunk, tuple) and len(chunk) >= 2:
+                    try:
+                        msg = email.message_from_bytes(chunk[1])
+                        sender = decode_str(msg.get("From", "")).strip()
+                        if sender:
+                            sender_counts[sender] = sender_counts.get(sender, 0) + 1
+                    except Exception:
+                        continue
+        except Exception:
+            continue
+
+    return sender_counts
+
 @app.route("/api/senders", methods=["GET"])
 def list_senders():
-    """Scan INBOX only (fast) for top senders — fetch all headers in one call."""
+    """Scan inbox + user folders for top senders, skipping bulk/system folders."""
     if "email" not in session:
         return jsonify({"ok": False, "error": "Not logged in."}), 401
 
     try:
         mail = connect(session["email"], session["password"], session.get("imap_server"))
-
         sender_counts = {}
-
         folders = get_folders(mail)
 
-        for folder in folders:
+        # Always scan INBOX first
+        priority = [f for f in folders if f.upper() == "INBOX"]
+        others   = [f for f in folders if f.upper() != "INBOX" and not should_skip_folder(f)]
+        scan_order = priority + others
+
+        for folder in scan_order:
             try:
-                if not select_folder_readonly(mail, folder):
-                    continue
-
-                # Get all message IDs
-                status, data = mail.search(None, "ALL")
-                if status != "OK" or not data or not data[0]:
-                    continue
-
-                ids = data[0].split()
-                if not ids:
-                    continue
-
-                # Fetch all FROM headers in one batched request (much faster)
-                # Fix: ids are bytes from search; join and decode for fetch command
-                id_set = b",".join(ids).decode()
-                status, msg_data = mail.fetch(id_set, "(BODY.PEEK[HEADER.FIELDS (FROM)])")
-                if status != "OK" or not msg_data:
-                    continue
-
-                for chunk in msg_data:
-                    if isinstance(chunk, tuple) and len(chunk) >= 2:
-                        try:
-                            msg = email.message_from_bytes(chunk[1])
-                            sender = decode_str(msg.get("From", "")).strip()
-                            if sender:
-                                sender_counts[sender] = sender_counts.get(sender, 0) + 1
-                        except Exception:
-                            continue
+                counts = fetch_senders_from_folder(mail, folder, max_emails=2000)
+                for sender, count in counts.items():
+                    sender_counts[sender] = sender_counts.get(sender, 0) + count
             except Exception:
                 continue
 
