@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MailSweep — Email Cleanup Tool</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  /* ── Reset & Variables ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0a0a0f;
+    --surface:   #13131a;
+    --border:    #252535;
+    --accent:    #e8ff5a;
+    --accent2:   #ff5a7e;
+    --text:      #e8e8f0;
+    --muted:     #6b6b8a;
+    --danger:    #ff4444;
+    --success:   #4aff91;
+    --mono:      'DM Mono', monospace;
+    --sans:      'Syne', sans-serif;
+    --radius:    12px;
+    --transition: 0.18s cubic-bezier(.4,0,.2,1);
+  }
+
+  html { font-size: 16px; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem 1rem 4rem;
+    background-image:
+      radial-gradient(ellipse 80% 40% at 50% -10%, rgba(232,255,90,0.07) 0%, transparent 60%),
+      radial-gradient(ellipse 40% 30% at 90% 80%, rgba(255,90,126,0.05) 0%, transparent 50%);
+  }
+
+  /* ── Header ── */
+  header {
+    width: 100%;
+    max-width: 700px;
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 3rem;
+    padding-top: 1rem;
+  }
+  .logo {
+    font-size: 1.8rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--text);
+  }
+  .logo span { color: var(--accent); }
+  .tagline {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* ── Cards ── */
+  .card {
+    width: 100%;
+    max-width: 700px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 2rem;
+    margin-bottom: 1.5rem;
+    animation: fadeUp 0.4s ease both;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .card h2 {
+    font-size: 0.75rem;
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    margin-bottom: 1.25rem;
+  }
+
+  /* ── Form elements ── */
+  label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.4rem;
+    margin-top: 1rem;
+  }
+  label:first-of-type { margin-top: 0; }
+  input[type="text"], input[type="email"], input[type="password"] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    padding: 0.7rem 1rem;
+    outline: none;
+    transition: border-color var(--transition);
+  }
+  input:focus { border-color: var(--accent); }
+  input::placeholder { color: var(--muted); }
+
+  .row { display: flex; gap: 0.75rem; align-items: flex-end; }
+  .row > * { flex: 1; }
+  .row label { margin-top: 0; }
+
+  /* ── Buttons ── */
+  button {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 0.88rem;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    padding: 0.7rem 1.4rem;
+    transition: all var(--transition);
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #0a0a0f;
+    width: 100%;
+    margin-top: 1.25rem;
+    padding: 0.85rem;
+    font-size: 0.95rem;
+  }
+  .btn-primary:hover { background: #f5ff80; transform: translateY(-1px); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  .btn-danger {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid var(--danger);
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+  }
+  .btn-danger:hover { background: rgba(255,68,68,0.1); }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    font-size: 0.78rem;
+    padding: 0.45rem 0.9rem;
+  }
+  .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+
+  /* ── Status bar ── */
+  .status {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 6px;
+    margin-top: 0.9rem;
+    display: none;
+  }
+  .status.info    { background: rgba(232,255,90,0.08);  color: var(--accent);  display: block; }
+  .status.error   { background: rgba(255,68,68,0.08);   color: var(--danger);  display: block; }
+  .status.success { background: rgba(74,255,145,0.08);  color: var(--success); display: block; }
+
+  /* ── Logged-in badge ── */
+  .who {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 1.25rem;
+  }
+  .who .dot {
+    width: 7px; height: 7px;
+    background: var(--success);
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 6px var(--success);
+  }
+
+  /* ── Sender list ── */
+  .sender-list {
+    max-height: 380px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .sender-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.65rem 0;
+    border-bottom: 1px solid var(--border);
+    animation: fadeUp 0.2s ease both;
+  }
+  .sender-item:last-child { border-bottom: none; }
+  .sender-info { flex: 1; min-width: 0; }
+  .sender-name {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sender-count {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+  .sender-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
+
+  /* ── Search box ── */
+  .search-wrap { position: relative; margin-bottom: 1rem; }
+  .search-wrap input { padding-left: 2.2rem; }
+  .search-icon {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 0.85rem;
+    pointer-events: none;
+  }
+
+  /* ── Custom sender input ── */
+  .custom-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-end;
+    margin-top: 1rem;
+  }
+  .custom-row > div { flex: 1; }
+
+  /* ── Modal ── */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+    backdrop-filter: blur(4px);
+    opacity: 0; pointer-events: none;
+    transition: opacity var(--transition);
+  }
+  .modal-overlay.open { opacity: 1; pointer-events: all; }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 2rem;
+    max-width: 420px;
+    width: 90%;
+    transform: scale(0.95);
+    transition: transform var(--transition);
+  }
+  .modal-overlay.open .modal { transform: scale(1); }
+  .modal h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+  .modal p { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); margin-bottom: 1.5rem; line-height: 1.6; }
+  .modal p strong { color: var(--accent2); }
+  .modal-actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
+
+  /* ── Loading spinner ── */
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid rgba(0,0,0,0.2);
+    border-top-color: #0a0a0f;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Sections ── */
+  [data-section] { display: none; }
+  [data-section].active { display: block; }
+
+  /* ── Tip box ── */
+  .tip {
+    background: rgba(232,255,90,0.04);
+    border: 1px solid rgba(232,255,90,0.15);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    color: var(--muted);
+    line-height: 1.6;
+    margin-top: 1rem;
+  }
+  .tip strong { color: var(--accent); }
+
+  /* ── Empty state ── */
+  .empty {
+    text-align: center;
+    padding: 2rem;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Mail<span>Sweep</span></div>
+  <div class="tagline">// bulk email cleanup tool</div>
+</header>
+
+<!-- ══ LOGIN SECTION ══ -->
+<div class="card" data-section="login" id="sec-login">
+  <h2>// Connect your email</h2>
+
+  <label>Email address</label>
+  <input type="email" id="inp-email" placeholder="you@example.com" autocomplete="email">
+
+  <label>Password / App Password</label>
+  <input type="password" id="inp-pass" placeholder="••••••••••••" autocomplete="current-password">
+
+  <label>IMAP server <span style="color:var(--muted);font-weight:400">(auto-detected for Gmail, Outlook, Yahoo — leave blank)</span></label>
+  <input type="text" id="inp-imap" placeholder="e.g. imap.yourprovider.com">
+
+  <div class="tip">
+    <strong>Using Gmail, Outlook, or Yahoo?</strong> You need an <strong>App Password</strong>, not your regular password.<br>
+    Gmail → myaccount.google.com/apppasswords &nbsp;|&nbsp;
+    Yahoo → account.yahoo.com/security &nbsp;|&nbsp;
+    Outlook → account.microsoft.com/security
+  </div>
+
+  <button class="btn-primary" id="btn-login">Connect →</button>
+  <div class="status" id="login-status"></div>
+</div>
+
+<!-- ══ MAIN SECTION ══ -->
+<div class="card" data-section="main" id="sec-main">
+  <div class="who">
+    <span class="dot"></span>
+    <span id="lbl-who">connected</span>
+    <button class="btn-ghost" id="btn-logout">disconnect</button>
+  </div>
+  <h2>// Delete by sender</h2>
+
+  <div class="custom-row">
+    <div>
+      <label>Sender email or name to delete</label>
+      <input type="text" id="inp-sender" placeholder="spam@example.com">
+    </div>
+    <button class="btn-primary" style="width:auto;margin-top:0;flex-shrink:0" id="btn-preview">Preview</button>
+  </div>
+
+  <div class="status" id="preview-status"></div>
+
+  <div id="confirm-wrap" style="display:none;margin-top:1rem;">
+    <button class="btn-danger" style="width:100%;padding:0.8rem" id="btn-delete">
+      🗑 Delete All Matching Emails
+    </button>
+  </div>
+
+  <div class="status" id="delete-status"></div>
+</div>
+
+<div class="card" data-section="senders" id="sec-senders" style="display:none">
+  <h2>// Top senders in your mailbox</h2>
+  <p style="font-family:var(--mono);font-size:0.75rem;color:var(--muted);margin-bottom:1rem">
+    Scan your mailbox to see who's filling it up — then delete with one click.
+  </p>
+  <button class="btn-primary" id="btn-scan" style="margin-top:0;margin-bottom:1rem">
+    Scan my mailbox
+  </button>
+
+  <div class="search-wrap" id="search-wrap" style="display:none">
+    <span class="search-icon">⌕</span>
+    <input type="text" id="inp-search" placeholder="Filter senders...">
+  </div>
+
+  <div class="sender-list" id="sender-list">
+    <div class="empty">Click "Scan my mailbox" to load senders.</div>
+  </div>
+  <div class="status" id="scan-status"></div>
+</div>
+
+<!-- ══ CONFIRM MODAL ══ -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h3>Are you sure?</h3>
+    <p id="modal-msg">This will permanently delete <strong id="modal-count">0</strong> emails from <strong id="modal-sender"></strong> across all folders. This cannot be undone.</p>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="modal-cancel">Cancel</button>
+      <button class="btn-danger" id="modal-confirm">Yes, delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  const $ = id => document.getElementById(id);
+  const show = id => $(id).style.display = '';
+  const hide = id => $(id).style.display = 'none';
+
+  function setStatus(id, type, msg) {
+    const el = $(id);
+    el.className = `status ${type}`;
+    el.textContent = msg;
+  }
+  function clearStatus(id) {
+    const el = $(id);
+    el.className = 'status';
+    el.textContent = '';
+  }
+
+  function showSection(name) {
+    ['login','main','senders'].forEach(s => {
+      const el = $(`sec-${s}`);
+      if (s === name) {
+        el.style.display = 'block';
+        el.style.animation = 'fadeUp 0.35s ease both';
+      } else {
+        el.style.display = 'none';
+      }
+    });
+    if (name === 'main') $('sec-senders').style.display = 'block';
+  }
+
+  async function api(path, body) {
+    const opts = { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const r = await fetch(path, opts);
+    return r.json();
+  }
+
+  // ── Login ─────────────────────────────────────────────────────────────────
+  $('btn-login').addEventListener('click', async () => {
+    const btn = $('btn-login');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Connecting...';
+    clearStatus('login-status');
+
+    const res = await api('/api/login', {
+      email:       $('inp-email').value,
+      password:    $('inp-pass').value,
+      imap_server: $('inp-imap').value,
+    });
+
+    if (res.ok) {
+      $('lbl-who').textContent = $('inp-email').value;
+      showSection('main');
+    } else {
+      setStatus('login-status', 'error', '✗ ' + res.error);
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Connect →';
+  });
+
+  // ── Logout ────────────────────────────────────────────────────────────────
+  $('btn-logout').addEventListener('click', async () => {
+    await api('/api/logout', {});
+    showSection('login');
+    $('inp-pass').value = '';
+    hide('confirm-wrap');
+    clearStatus('preview-status');
+    clearStatus('delete-status');
+  });
+
+  // ── Preview ───────────────────────────────────────────────────────────────
+  $('btn-preview').addEventListener('click', async () => {
+    const sender = $('inp-sender').value.trim();
+    if (!sender) { setStatus('preview-status', 'error', 'Enter a sender email or name.'); return; }
+    clearStatus('preview-status');
+    hide('confirm-wrap');
+    $('btn-preview').innerHTML = '<span class="spinner"></span>';
+    $('btn-preview').disabled = true;
+
+    const res = await api('/api/preview', { sender });
+    $('btn-preview').textContent = 'Preview';
+    $('btn-preview').disabled = false;
+
+    if (res.ok) {
+      if (res.count === 0) {
+        setStatus('preview-status', 'info', `No emails found from "${sender}".`);
+      } else {
+        setStatus('preview-status', 'info', `Found ${res.count} email(s) from "${sender}" across all folders.`);
+        show('confirm-wrap');
+        window._pendingCount = res.count;
+      }
+    } else {
+      setStatus('preview-status', 'error', '✗ ' + res.error);
+    }
+  });
+
+  // ── Delete (with modal confirm) ───────────────────────────────────────────
+  $('btn-delete').addEventListener('click', () => {
+    const sender = $('inp-sender').value.trim();
+    $('modal-count').textContent = window._pendingCount;
+    $('modal-sender').textContent = sender;
+    $('modal').classList.add('open');
+  });
+
+  $('modal-cancel').addEventListener('click', () => $('modal').classList.remove('open'));
+
+  $('modal-confirm').addEventListener('click', async () => {
+    $('modal').classList.remove('open');
+    const sender = $('inp-sender').value.trim();
+    $('btn-delete').disabled = true;
+    $('btn-delete').innerHTML = '<span class="spinner" style="border-top-color:var(--danger)"></span> Deleting...';
+    clearStatus('delete-status');
+
+    const res = await api('/api/delete', { sender });
+    $('btn-delete').disabled = false;
+    $('btn-delete').innerHTML = '🗑 Delete All Matching Emails';
+
+    if (res.ok) {
+      setStatus('delete-status', 'success', `✓ Deleted ${res.deleted} email(s) from "${sender}".`);
+      hide('confirm-wrap');
+      clearStatus('preview-status');
+      $('inp-sender').value = '';
+      // Refresh sender list if visible
+      if ($('sender-list').dataset.loaded) loadSenders();
+    } else {
+      setStatus('delete-status', 'error', '✗ ' + res.error);
+    }
+  });
+
+  // ── Sender Scanner ────────────────────────────────────────────────────────
+  let allSenders = [];
+
+  $('btn-scan').addEventListener('click', loadSenders);
+
+  async function loadSenders() {
+    $('btn-scan').innerHTML = '<span class="spinner"></span> Scanning all folders...';
+    $('btn-scan').disabled = true;
+    $('sender-list').innerHTML = '<div class="empty">Scanning… this may take a minute for large mailboxes.</div>';
+    hide('search-wrap');
+    clearStatus('scan-status');
+
+    const res = await api('/api/senders');
+    $('btn-scan').textContent = 'Rescan';
+    $('btn-scan').disabled = false;
+
+    if (res.ok) {
+      allSenders = res.senders;
+      $('sender-list').dataset.loaded = '1';
+      show('search-wrap');
+      renderSenders(allSenders);
+    } else {
+      setStatus('scan-status', 'error', '✗ ' + res.error);
+    }
+  }
+
+  function renderSenders(list) {
+    if (list.length === 0) {
+      $('sender-list').innerHTML = '<div class="empty">No senders found.</div>';
+      return;
+    }
+    $('sender-list').innerHTML = list.map(([sender, count]) => `
+      <div class="sender-item">
+        <div class="sender-info">
+          <div class="sender-name" title="${esc(sender)}">${esc(sender)}</div>
+          <div class="sender-count">${count} email${count !== 1 ? 's' : ''}</div>
+        </div>
+        <div class="sender-actions">
+          <button class="btn-ghost" onclick="prefill(${JSON.stringify(sender)})">Select</button>
+          <button class="btn-danger" onclick="quickDelete(${JSON.stringify(sender)}, ${count})">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function esc(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  $('inp-search').addEventListener('input', () => {
+    const q = $('inp-search').value.toLowerCase();
+    renderSenders(allSenders.filter(([s]) => s.toLowerCase().includes(q)));
+  });
+
+  function prefill(sender) {
+    // Extract just the email address if wrapped in Name <email>
+    const match = sender.match(/<(.+?)>/);
+    $('inp-sender').value = match ? match[1] : sender;
+    $('sec-main').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function quickDelete(sender, count) {
+    prefill(sender);
+    $('modal-count').textContent = count;
+    $('modal-sender').textContent = sender;
+    window._pendingCount = count;
+    $('modal').classList.add('open');
+
+    $('modal-confirm').onclick = async () => {
+      $('modal').classList.remove('open');
+      const senderVal = $('inp-sender').value.trim();
+      $('btn-delete').disabled = true;
+      clearStatus('delete-status');
+
+      const res = await api('/api/delete', { sender: senderVal });
+      if (res.ok) {
+        setStatus('delete-status', 'success', `✓ Deleted ${res.deleted} email(s) from "${senderVal}".`);
+        loadSenders();
+      } else {
+        setStatus('delete-status', 'error', '✗ ' + res.error);
+      }
+      $('btn-delete').disabled = false;
+    };
+  }
+
+  // Re-bind modal confirm default behavior
+  $('modal-confirm').addEventListener('click', () => {}, false);
+</script>
+</body>
+</html>
