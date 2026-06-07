@@ -632,6 +632,9 @@ HTML_PAGE = """<!DOCTYPE html>
 
   // Re-bind modal confirm default behavior
   $('modal-confirm').addEventListener('click', () => {}, false);
+
+  // Show login section on page load
+  showSection('login');
 </script>
 </body>
 </html>
