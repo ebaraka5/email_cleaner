@@ -513,18 +513,32 @@ HTML_PAGE = """<!DOCTYPE html>
   });
 
   // ── Delete (with modal confirm) ───────────────────────────────────────────
-  $('btn-delete').addEventListener('click', () => {
-    const sender = $('inp-sender').value.trim();
-    $('modal-count').textContent = window._pendingCount;
+  // Fix: single source of truth for pending sender — avoids double-listener bugs
+  let _pendingSender = null;
+
+  function openConfirmModal(sender, count) {
+    _pendingSender = sender;
+    $('modal-count').textContent = count;
     $('modal-sender').textContent = sender;
     $('modal').classList.add('open');
+  }
+
+  $('btn-delete').addEventListener('click', () => {
+    const sender = $('inp-sender').value.trim();
+    openConfirmModal(sender, window._pendingCount || '?');
   });
 
-  $('modal-cancel').addEventListener('click', () => $('modal').classList.remove('open'));
+  $('modal-cancel').addEventListener('click', () => {
+    $('modal').classList.remove('open');
+    _pendingSender = null;
+  });
 
   $('modal-confirm').addEventListener('click', async () => {
     $('modal').classList.remove('open');
-    const sender = $('inp-sender').value.trim();
+    const sender = _pendingSender;
+    _pendingSender = null;
+    if (!sender) return;
+
     $('btn-delete').disabled = true;
     $('btn-delete').innerHTML = '<span class="spinner" style="border-top-color:var(--danger)"></span> Deleting...';
     clearStatus('delete-status');
@@ -538,7 +552,6 @@ HTML_PAGE = """<!DOCTYPE html>
       hide('confirm-wrap');
       clearStatus('preview-status');
       $('inp-sender').value = '';
-      // Refresh sender list if visible
       if ($('sender-list').dataset.loaded) loadSenders();
     } else {
       setStatus('delete-status', 'error', '✗ ' + res.error);
@@ -607,31 +620,11 @@ HTML_PAGE = """<!DOCTYPE html>
   }
 
   function quickDelete(sender, count) {
-    prefill(sender);
-    $('modal-count').textContent = count;
-    $('modal-sender').textContent = sender;
-    window._pendingCount = count;
-    $('modal').classList.add('open');
-
-    $('modal-confirm').onclick = async () => {
-      $('modal').classList.remove('open');
-      const senderVal = $('inp-sender').value.trim();
-      $('btn-delete').disabled = true;
-      clearStatus('delete-status');
-
-      const res = await api('/api/delete', { sender: senderVal });
-      if (res.ok) {
-        setStatus('delete-status', 'success', `✓ Deleted ${res.deleted} email(s) from "${senderVal}".`);
-        loadSenders();
-      } else {
-        setStatus('delete-status', 'error', '✗ ' + res.error);
-      }
-      $('btn-delete').disabled = false;
-    };
+    // Fix: use shared modal opener — no more conflicting onclick handlers
+    const match = sender.match(/<(.+?)>/);
+    const emailOnly = match ? match[1] : sender;
+    openConfirmModal(emailOnly, count);
   }
-
-  // Re-bind modal confirm default behavior
-  $('modal-confirm').addEventListener('click', () => {}, false);
 
   // Show login section on page load
   showSection('login');
@@ -640,8 +633,13 @@ HTML_PAGE = """<!DOCTYPE html>
 </html>
 """
 
+from datetime import timedelta
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change-this-in-production-please")
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = False  # set True if using HTTPS only
 
 # ── IMAP server presets ───────────────────────────────────────────────────────
 IMAP_SERVERS = {
@@ -670,22 +668,93 @@ def get_imap_server(email_addr, custom_server=None):
 def connect(email_addr, password, custom_server=None):
     server = get_imap_server(email_addr, custom_server)
     if not server:
-        raise ValueError(f"Unknown email provider. Please enter your IMAP server manually.")
+        raise ValueError("Unknown email provider. Please enter your IMAP server manually.")
     mail = imaplib.IMAP4_SSL(server, 993)
+    mail.socket().settimeout(25)  # Fix: don't hang forever on unresponsive servers
     mail.login(email_addr, password)
     return mail
 
 def decode_str(s):
     if s is None:
         return ""
-    parts = decode_header(s)
-    result = []
-    for part, enc in parts:
-        if isinstance(part, bytes):
-            result.append(part.decode(enc or "utf-8", errors="replace"))
-        else:
-            result.append(part)
-    return " ".join(result)
+    try:
+        parts = decode_header(s)
+        result = []
+        for part, enc in parts:
+            if isinstance(part, bytes):
+                result.append(part.decode(enc or "utf-8", errors="replace"))
+            else:
+                result.append(str(part))
+        return " ".join(result).strip()
+    except Exception:
+        return str(s)
+
+def get_folders(mail):
+    """Return a robust list of selectable folder names."""
+    import re
+    status, folder_list = mail.list()
+    folders = []
+    if status != "OK":
+        return ["INBOX"]
+    for item in folder_list:
+        if item is None:
+            continue
+        decoded = item.decode("utf-8", errors="replace")
+        # Skip non-selectable folders
+        if "\\Noselect" in decoded or "\\NoSelect" in decoded:
+            continue
+        # Robustly extract folder name — handles spaces, special chars, quoted names
+        # IMAP LIST format: (\Flags) "separator" "Folder Name" or NIL "Folder Name"
+        # The folder name is always at the end, optionally quoted
+        match = re.search(r' (?:"([^"]+)"|([^"\s][^\s]*))$', decoded)
+        if match:
+            name = match.group(1) or match.group(2)
+            if name:
+                folders.append(name)
+    return folders if folders else ["INBOX"]
+
+def select_folder(mail, folder):
+    """Try selecting a folder, handling quoting issues."""
+    # Try quoted first, then unquoted
+    for attempt in [f'"{folder}"', folder]:
+        try:
+            status, data = mail.select(attempt, readonly=False)
+            if status == "OK":
+                return True
+        except Exception:
+            pass
+    return False
+
+def select_folder_readonly(mail, folder):
+    for attempt in [f'"{folder}"', folder]:
+        try:
+            status, data = mail.select(attempt, readonly=True)
+            if status == "OK":
+                return True
+        except Exception:
+            pass
+    return False
+
+def search_from(mail, sender_query):
+    """Search for emails from a sender, collecting results from all query formats."""
+    # Fix: collect all unique IDs across query formats, don't stop at first hit
+    all_ids = set()
+    queries = [
+        f'FROM "{sender_query}"',
+    ]
+    # Only add unquoted form if it looks like a plain email (no spaces)
+    if " " not in sender_query:
+        queries.append(f'FROM {sender_query}')
+
+    for q in queries:
+        try:
+            status, data = mail.search(None, q)
+            if status == "OK" and data and data[0]:
+                for uid in data[0].split():
+                    all_ids.add(uid)
+        except Exception:
+            continue
+    return list(all_ids)
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -696,9 +765,9 @@ def index():
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.json
-    email_addr   = data.get("email", "").strip()
-    password     = data.get("password", "").strip()
-    custom_imap  = data.get("imap_server", "").strip() or None
+    email_addr  = data.get("email", "").strip()
+    password    = data.get("password", "").strip()
+    custom_imap = data.get("imap_server", "").strip() or None
 
     if not email_addr or not password:
         return jsonify({"ok": False, "error": "Email and password are required."}), 400
@@ -706,12 +775,12 @@ def login():
     try:
         mail = connect(email_addr, password, custom_imap)
         mail.logout()
-        # Store credentials in server-side session (never sent back to browser)
+        session.permanent = True  # Fix: persist session across requests
         session["email"]       = email_addr
         session["password"]    = password
         session["imap_server"] = custom_imap
         return jsonify({"ok": True})
-    except imaplib.IMAP4.error as e:
+    except imaplib.IMAP4.error:
         return jsonify({"ok": False, "error": "Login failed — check your email/password or App Password."}), 401
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -723,57 +792,61 @@ def logout():
 
 @app.route("/api/senders", methods=["GET"])
 def list_senders():
-    """Return the top senders by email count across all folders."""
+    """Scan INBOX only (fast) for top senders — fetch all headers in one call."""
     if "email" not in session:
         return jsonify({"ok": False, "error": "Not logged in."}), 401
 
     try:
         mail = connect(session["email"], session["password"], session.get("imap_server"))
 
-        # Gather all folder names
-        status, folders = mail.list()
-        folder_names = []
-        for f in folders:
-            parts = f.decode().split(' "." ')
-            if len(parts) >= 2:
-                folder_names.append(parts[-1].strip().strip('"'))
-
         sender_counts = {}
 
-        for folder in folder_names:
+        folders = get_folders(mail)
+
+        for folder in folders:
             try:
-                status, _ = mail.select(f'"{folder}"', readonly=True)
-                if status != "OK":
+                if not select_folder_readonly(mail, folder):
                     continue
+
+                # Get all message IDs
                 status, data = mail.search(None, "ALL")
-                if status != "OK" or not data[0]:
+                if status != "OK" or not data or not data[0]:
                     continue
+
                 ids = data[0].split()
-                # Fetch only headers (fast)
-                for uid in ids:
-                    status, msg_data = mail.fetch(uid, "(BODY[HEADER.FIELDS (FROM)])")
-                    if status != "OK":
-                        continue
-                    raw = msg_data[0][1]
-                    msg = email.message_from_bytes(raw)
-                    sender = decode_str(msg.get("From", "")).strip()
-                    if sender:
-                        sender_counts[sender] = sender_counts.get(sender, 0) + 1
+                if not ids:
+                    continue
+
+                # Fetch all FROM headers in one batched request (much faster)
+                # Fix: ids are bytes from search; join and decode for fetch command
+                id_set = b",".join(ids).decode()
+                status, msg_data = mail.fetch(id_set, "(BODY.PEEK[HEADER.FIELDS (FROM)])")
+                if status != "OK" or not msg_data:
+                    continue
+
+                for chunk in msg_data:
+                    if isinstance(chunk, tuple) and len(chunk) >= 2:
+                        try:
+                            msg = email.message_from_bytes(chunk[1])
+                            sender = decode_str(msg.get("From", "")).strip()
+                            if sender:
+                                sender_counts[sender] = sender_counts.get(sender, 0) + 1
+                        except Exception:
+                            continue
             except Exception:
                 continue
 
         mail.logout()
 
-        # Sort by count descending
         sorted_senders = sorted(sender_counts.items(), key=lambda x: x[1], reverse=True)
-        return jsonify({"ok": True, "senders": sorted_senders[:100]})  # top 100
+        return jsonify({"ok": True, "senders": sorted_senders[:150]})
 
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/preview", methods=["POST"])
 def preview():
-    """Count how many emails would be deleted for a given sender."""
+    """Count emails from a sender across all folders."""
     if "email" not in session:
         return jsonify({"ok": False, "error": "Not logged in."}), 401
 
@@ -783,20 +856,15 @@ def preview():
 
     try:
         mail = connect(session["email"], session["password"], session.get("imap_server"))
-        status, folders = mail.list()
-        folder_names = []
-        for f in folders:
-            parts = f.decode().split(' "." ')
-            if len(parts) >= 2:
-                folder_names.append(parts[-1].strip().strip('"'))
-
+        folders = get_folders(mail)
         total = 0
-        for folder in folder_names:
+
+        for folder in folders:
             try:
-                mail.select(f'"{folder}"', readonly=True)
-                status, data = mail.search(None, f'FROM "{sender_query}"')
-                if status == "OK" and data[0]:
-                    total += len(data[0].split())
+                if not select_folder_readonly(mail, folder):
+                    continue
+                ids = search_from(mail, sender_query)
+                total += len(ids)
             except Exception:
                 continue
 
@@ -807,7 +875,7 @@ def preview():
 
 @app.route("/api/delete", methods=["POST"])
 def delete():
-    """Delete all emails from a given sender across all folders."""
+    """Delete all emails from a sender across all folders."""
     if "email" not in session:
         return jsonify({"ok": False, "error": "Not logged in."}), 401
 
@@ -817,24 +885,19 @@ def delete():
 
     try:
         mail = connect(session["email"], session["password"], session.get("imap_server"))
-        status, folders = mail.list()
-        folder_names = []
-        for f in folders:
-            parts = f.decode().split(' "." ')
-            if len(parts) >= 2:
-                folder_names.append(parts[-1].strip().strip('"'))
-
+        folders = get_folders(mail)
         total_deleted = 0
 
-        for folder in folder_names:
+        for folder in folders:
             try:
-                mail.select(f'"{folder}"')
-                status, data = mail.search(None, f'FROM "{sender_query}"')
-                if status != "OK" or not data[0]:
+                if not select_folder(mail, folder):
                     continue
-                ids = data[0].split()
-                for uid in ids:
-                    mail.store(uid, "+FLAGS", "\\Deleted")
+                ids = search_from(mail, sender_query)
+                if not ids:
+                    continue
+                # Mark all as deleted in one call
+                id_set = b",".join(ids).decode()
+                mail.store(id_set, "+FLAGS", "\\Deleted")
                 mail.expunge()
                 total_deleted += len(ids)
             except Exception:
