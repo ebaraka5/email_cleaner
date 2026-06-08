@@ -1,583 +1,300 @@
 from flask import Flask, request, jsonify, session
-import imaplib
-import email
+import imaplib, email, os, re
 from email.header import decode_header
-import os
-import re
 from datetime import timedelta
 
-HTML_PAGE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MailSweep - Email Cleanup</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
-<style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#0a0a0f;--surface:#13131a;--border:#252535;--accent:#e8ff5a;--accent2:#ff5a7e;--text:#e8e8f0;--muted:#6b6b8a;--danger:#ff4444;--success:#4aff91;--mono:'DM Mono',monospace;--sans:'Syne',sans-serif;--radius:12px;--transition:0.18s cubic-bezier(.4,0,.2,1)}
-html{font-size:16px}
-body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:2rem 1rem 4rem;background-image:radial-gradient(ellipse 80% 40% at 50% -10%,rgba(232,255,90,0.07) 0%,transparent 60%),radial-gradient(ellipse 40% 30% at 90% 80%,rgba(255,90,126,0.05) 0%,transparent 50%)}
-header{width:100%;max-width:700px;display:flex;align-items:baseline;gap:1rem;margin-bottom:3rem;padding-top:1rem}
-.logo{font-size:1.8rem;font-weight:800;letter-spacing:-0.03em;color:var(--text)}
-.logo span{color:var(--accent)}
-.tagline{font-family:var(--mono);font-size:0.7rem;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase}
-.card{width:100%;max-width:700px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:2rem;margin-bottom:1.5rem;animation:fadeUp 0.4s ease both}
-@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
-.card h2{font-size:0.75rem;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.12em;color:var(--muted);margin-bottom:1.25rem}
-label{display:block;font-family:var(--mono);font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.4rem;margin-top:1rem}
-label:first-of-type{margin-top:0}
-input[type="text"],input[type="email"],input[type="password"]{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:0.9rem;padding:0.7rem 1rem;outline:none;transition:border-color var(--transition)}
-input:focus{border-color:var(--accent)}
-input::placeholder{color:var(--muted)}
-button{font-family:var(--sans);font-weight:600;font-size:0.88rem;border:none;border-radius:8px;cursor:pointer;padding:0.7rem 1.4rem;transition:all var(--transition);letter-spacing:0.01em;white-space:nowrap}
-.btn-primary{background:var(--accent);color:#0a0a0f;width:100%;margin-top:1.25rem;padding:0.85rem;font-size:0.95rem}
-.btn-primary:hover{background:#f5ff80;transform:translateY(-1px)}
-.btn-primary:active{transform:translateY(0)}
-.btn-primary:disabled{opacity:0.4;cursor:not-allowed;transform:none}
-.btn-danger{background:0;color:var(--danger);border:1px solid var(--danger);padding:0.5rem 1rem;font-size:0.8rem}
-.btn-danger:hover{background:rgba(255,68,68,0.1)}
-.btn-ghost{background:0;color:var(--muted);border:1px solid var(--border);font-size:0.78rem;padding:0.45rem 0.9rem}
-.btn-ghost:hover{color:var(--text);border-color:var(--muted)}
-.status{font-family:var(--mono);font-size:0.78rem;padding:0.6rem 0.9rem;border-radius:6px;margin-top:0.9rem;display:none}
-.status.info{background:rgba(232,255,90,0.08);color:var(--accent);display:block}
-.status.error{background:rgba(255,68,68,0.08);color:var(--danger);display:block}
-.status.success{background:rgba(74,255,145,0.08);color:var(--success);display:block}
-.who{font-family:var(--mono);font-size:0.78rem;color:var(--muted);display:flex;align-items:center;gap:0.6rem;margin-bottom:1.25rem}
-.who .dot{width:7px;height:7px;background:var(--success);border-radius:50%;display:inline-block;box-shadow:0 0 6px var(--success)}
-.sender-list{max-height:380px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
-.sender-item{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:0.65rem 0;border-bottom:1px solid var(--border);animation:fadeUp 0.2s ease both}
-.sender-item:last-child{border-bottom:0}
-.sender-info{flex:1;min-width:0}
-.sender-name{font-family:var(--mono);font-size:0.82rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sender-count{font-family:var(--mono);font-size:0.7rem;color:var(--muted)}
-.sender-actions{display:flex;gap:0.5rem;flex-shrink:0}
-.search-wrap{position:relative;margin-bottom:1rem}
-.search-wrap input{padding-left:2.2rem}
-.search-icon{position:absolute;left:0.75rem;top:50%;transform:translateY(-50%);color:var(--muted);font-size:0.85rem;pointer-events:none}
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:100;backdrop-filter:blur(4px);opacity:0;pointer-events:none;transition:opacity var(--transition)}
-.modal-overlay.open{opacity:1;pointer-events:all}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:2rem;max-width:420px;width:90%;transform:scale(0.95);transition:transform var(--transition)}
-.modal-overlay.open .modal{transform:scale(1)}
-.modal h3{font-size:1.1rem;margin-bottom:0.5rem}
-.modal p{font-family:var(--mono);font-size:0.8rem;color:var(--muted);margin-bottom:1.5rem;line-height:1.6}
-.modal p strong{color:var(--accent2)}
-.modal-actions{display:flex;gap:0.75rem;justify-content:flex-end}
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(0,0,0,0.2);border-top-color:#0a0a0f;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;margin-right:6px}
-@keyframes spin{to{transform:rotate(360deg)}}
-[data-section]{display:none}
-[data-section].active{display:block}
-.tip{background:rgba(232,255,90,0.04);border:1px solid rgba(232,255,90,0.15);border-radius:8px;padding:0.75rem 1rem;font-family:var(--mono);font-size:0.74rem;color:var(--muted);line-height:1.6;margin-top:1rem}
-.tip strong{color:var(--accent)}
-.empty{text-align:center;padding:2rem;font-family:var(--mono);font-size:0.8rem;color:var(--muted)}
-</style>
-</head>
-<body>
+HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><title>MailSweep</title><link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;800" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}:root{--bg:#0a0a0f;--surface:#13131a;--border:#252535;--accent:#e8ff5a;--danger:#ff4444;--success:#4aff91;--text:#e8e8f0;--muted:#6b6b8a}body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:2rem 1rem}.card{width:100%;max-width:700px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:2rem;margin-bottom:1.5rem}h2{font-size:0.75rem;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:1rem;text-transform:uppercase}label{display:block;font-family:'DM Mono',monospace;font-size:0.72rem;color:var(--muted);margin-top:1rem;margin-bottom:0.4rem}input{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;padding:0.7rem;border-radius:8px;outline:none}input:focus{border-color:var(--accent)}button{font-family:'Syne',sans-serif;border:none;border-radius:8px;cursor:pointer;padding:0.7rem 1.4rem;transition:all 0.18s}.btn-primary{background:var(--accent);color:#0a0a0f;width:100%;margin-top:1.25rem;font-weight:600}.btn-primary:hover{background:#f5ff80}.btn-ghost{background:0;color:var(--muted);border:1px solid var(--border);font-size:0.78rem}.btn-ghost:hover{color:var(--text)}.btn-danger{background:0;color:var(--danger);border:1px solid var(--danger);padding:0.5rem 1rem;font-size:0.8rem}.status{font-family:'DM Mono',monospace;font-size:0.78rem;padding:0.6rem 0.9rem;margin-top:0.9rem;display:none}.status.info{background:rgba(232,255,90,0.08);color:var(--accent);display:block}.status.error{background:rgba(255,68,68,0.08);color:var(--danger);display:block}.status.success{background:rgba(74,255,145,0.08);color:var(--success);display:block}.who{font-family:'DM Mono',monospace;font-size:0.78rem;color:var(--muted);display:flex;align-items:center;gap:0.6rem;margin-bottom:1.25rem}.who .dot{width:7px;height:7px;background:var(--success);border-radius:50%;box-shadow:0 0 6px var(--success)}.sender-list{max-height:380px;overflow-y:auto}.sender-item{display:flex;justify-content:space-between;padding:0.65rem 0;border-bottom:1px solid var(--border)}.sender-info{flex:1;min-width:0}.sender-name{font-family:'DM Mono',monospace;font-size:0.82rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sender-count{font-family:'DM Mono',monospace;font-size:0.7rem;color:var(--muted)}.sender-actions{display:flex;gap:0.5rem}.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:100;opacity:0;pointer-events:none;transition:opacity 0.18s}.modal-overlay.open{opacity:1;pointer-events:all}.modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:2rem;max-width:420px;width:90%}.modal h3{font-size:1.1rem;margin-bottom:0.5rem}.modal p{font-family:'DM Mono',monospace;font-size:0.8rem;color:var(--muted);margin-bottom:1.5rem}.modal-actions{display:flex;gap:0.75rem;justify-content:flex-end}.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(0,0,0,0.2);border-top-color:#0a0a0f;border-radius:50%;animation:spin 0.7s linear infinite;margin-right:6px}@keyframes spin{to{transform:rotate(360deg)}}[data-section]{display:none}[data-section].active{display:block}.empty{text-align:center;padding:2rem;font-family:'DM Mono',monospace;font-size:0.8rem;color:var(--muted)}</style></head><body><div class="card"><div style="font-size:1.8rem;font-weight:800;margin-bottom:2rem">Mail<span style="color:var(--accent)">Sweep</span></div><div data-section="login" id="login"><h2>Connect Email</h2><label>Email</label><input type="email" id="email" placeholder="you@example.com"><label>Password</label><input type="password" id="pass" placeholder="••••••••••"><label>IMAP Server (optional)</label><input type="text" id="imap"><button class="btn-primary" id="btn-login">Connect</button><div class="status" id="login-status"></div></div><div data-section="main" id="main"><div class="who"><span class="dot"></span><span id="who">connected</span><button class="btn-ghost" id="btn-logout">logout</button></div><h2>Delete by Sender</h2><label>Sender Email</label><input type="text" id="sender"><button class="btn-primary" id="btn-preview">Preview</button><div class="status" id="preview-status"></div><div id="confirm" style="display:none;margin-top:1rem"><button class="btn-danger" style="width:100%;padding:0.8rem" id="btn-delete">Delete All</button></div><div class="status" id="delete-status"></div></div><div data-section="senders" id="senders"><h2>Top Senders</h2><button class="btn-primary" id="btn-scan">Scan Mailbox</button><div style="margin-top:1rem;display:none" id="search-wrap"><input type="text" id="search" placeholder="Filter..."></div><div class="sender-list" id="list"><div class="empty">Click Scan.</div></div><div class="status" id="scan-status"></div></div></div><div class="modal-overlay" id="modal"><div class="modal"><h3>Confirm Delete?</h3><p>Delete <strong id="m-count">0</strong> emails from <strong id="m-sender"></strong>. Cannot undo.</p><div class="modal-actions"><button class="btn-ghost" id="modal-cancel">Cancel</button><button class="btn-danger" id="modal-ok">Yes, Delete</button></div></div></div><script>
+var $=id=>document.getElementById(id);
+var show=id=>$(id).style.display='';
+var hide=id=>$(id).style.display='none';
+var setStatus=(id,type,msg)=>{var e=$(id);e.className='status '+type;e.textContent=msg};
+var clearStatus=id=>{var e=$(id);e.className='status';e.textContent=''};
+var showSection=name=>{['login','main','senders'].forEach(s=>{var e=$('sec-'+s.replace('-',''));e.style.display=s===name?'block':'none'})};
+var api=async(path,body)=>{var opts={method:body?'POST':'GET',headers:{'Content-Type':'application/json'}};if(body)opts.body=JSON.stringify(body);var r=await fetch(path,opts);return r.json()};
 
-<header>
-  <div class="logo">Mail<span>Sweep</span></div>
-  <div class="tagline">// bulk email cleanup</div>
-</header>
-
-<div class="card" data-section="login" id="sec-login">
-  <h2>// Connect your email</h2>
-  <label>Email address</label>
-  <input type="email" id="inp-email" placeholder="you@example.com">
-  <label>Password / App Password</label>
-  <input type="password" id="inp-pass" placeholder="••••••••••••">
-  <label>IMAP server (optional)</label>
-  <input type="text" id="inp-imap" placeholder="leave blank for auto-detect">
-  <div class="tip"><strong>Gmail/Outlook/Yahoo?</strong> You need an App Password. Gmail: myaccount.google.com/apppasswords</div>
-  <button class="btn-primary" id="btn-login">Connect</button>
-  <div class="status" id="login-status"></div>
-</div>
-
-<div class="card" data-section="main" id="sec-main">
-  <div class="who"><span class="dot"></span><span id="lbl-who">connected</span><button class="btn-ghost" id="btn-logout">logout</button></div>
-  <h2>// Delete by sender</h2>
-  <label>Sender to delete</label>
-  <input type="text" id="inp-sender" placeholder="spam@example.com">
-  <button class="btn-primary" id="btn-preview">Preview</button>
-  <div class="status" id="preview-status"></div>
-  <div id="confirm-wrap" style="display:none;margin-top:1rem;">
-    <button class="btn-danger" style="width:100%;padding:0.8rem" id="btn-delete">Delete All</button>
-  </div>
-  <div class="status" id="delete-status"></div>
-</div>
-
-<div class="card" data-section="senders" id="sec-senders">
-  <h2>// Top senders</h2>
-  <button class="btn-primary" id="btn-scan">Scan mailbox</button>
-  <div class="search-wrap" id="search-wrap" style="display:none;margin-top:1rem">
-    <span class="search-icon">⌕</span>
-    <input type="text" id="inp-search" placeholder="Filter...">
-  </div>
-  <div class="sender-list" id="sender-list"><div class="empty">Click Scan to load senders.</div></div>
-  <div class="status" id="scan-status"></div>
-</div>
-
-<div class="modal-overlay" id="modal">
-  <div class="modal">
-    <h3>Confirm delete?</h3>
-    <p>Delete <strong id="modal-count">0</strong> emails from <strong id="modal-sender"></strong>. Cannot undo.</p>
-    <div class="modal-actions">
-      <button class="btn-ghost" id="modal-cancel">Cancel</button>
-      <button class="btn-danger" id="modal-confirm">Yes, delete</button>
-    </div>
-  </div>
-</div>
-
-<script>
-var $=function(id){return document.getElementById(id)};
-var show=function(id){$(id).style.display=''};
-var hide=function(id){$(id).style.display='none'};
-
-function setStatus(id,type,msg){var el=$(id);el.className='status '+type;el.textContent=msg}
-function clearStatus(id){var el=$(id);el.className='status';el.textContent=''}
-
-function showSection(name){
-  ['login','main','senders'].forEach(function(s){
-    var el=$('sec-'+s);
-    el.style.display=s===name?'block':'none';
-  });
-  if(name==='main')$('sec-senders').style.display='block';
-}
-
-async function api(path,body){
-  var opts={method:body?'POST':'GET',headers:{'Content-Type':'application/json'}};
-  if(body)opts.body=JSON.stringify(body);
-  var r=await fetch(path,opts);
-  return r.json();
-}
-
-// LOGIN
 $('btn-login').addEventListener('click',async function(){
-  var btn=$('btn-login');
-  btn.disabled=true;
-  btn.innerHTML='<span class="spinner"></span> Connecting...';
+  this.disabled=true;
+  this.innerHTML='<span class="spinner"></span> Connecting...';
   clearStatus('login-status');
-  var res=await api('/api/login',{email:$('inp-email').value,password:$('inp-pass').value,imap_server:$('inp-imap').value});
-  if(res.ok){$('lbl-who').textContent=$('inp-email').value;showSection('main')}
+  var res=await api('/api/login',{email:$('email').value,password:$('pass').value,imap_server:$('imap').value});
+  if(res.ok){$('who').textContent=$('email').value;$('login').style.display='none';$('main').style.display='block';$('senders').style.display='block'}
   else{setStatus('login-status','error','✗ '+res.error)}
-  btn.disabled=false;
-  btn.textContent='Connect';
+  this.disabled=false;
+  this.textContent='Connect';
 });
 
-// LOGOUT
 $('btn-logout').addEventListener('click',async function(){
   await api('/api/logout',{});
-  showSection('login');
-  $('inp-pass').value='';
-  hide('confirm-wrap');
-  clearStatus('preview-status');
-  clearStatus('delete-status');
+  $('login').style.display='block';
+  $('main').style.display='none';
+  $('senders').style.display='none';
+  $('pass').value='';
 });
 
-// PREVIEW
 $('btn-preview').addEventListener('click',async function(){
-  var sender=$('inp-sender').value.trim();
+  var sender=$('sender').value.trim();
   if(!sender){setStatus('preview-status','error','Enter a sender.');return}
-  clearStatus('preview-status');hide('confirm-wrap');
-  $('btn-preview').innerHTML='<span class="spinner"></span>';
-  $('btn-preview').disabled=true;
+  clearStatus('preview-status');hide('confirm');
+  this.innerHTML='<span class="spinner"></span>';this.disabled=true;
   var res=await api('/api/preview',{sender:sender});
-  $('btn-preview').textContent='Preview';
-  $('btn-preview').disabled=false;
+  this.textContent='Preview';this.disabled=false;
   if(res.ok){
     if(res.count===0){setStatus('preview-status','info','No emails found.')}
-    else{setStatus('preview-status','info','Found '+res.count+' email(s).');show('confirm-wrap');window._pendingCount=res.count}
+    else{setStatus('preview-status','info','Found '+res.count+' email(s).');show('confirm');window._count=res.count}
   }else{setStatus('preview-status','error','✗ '+res.error)}
 });
 
-// MODAL
-var _pendingSender=null;
-function openConfirmModal(sender,count){_pendingSender=sender;$('modal-count').textContent=count;$('modal-sender').textContent=sender;$('modal').classList.add('open')}
-
-$('btn-delete').addEventListener('click',function(){var sender=$('inp-sender').value.trim();openConfirmModal(sender,window._pendingCount||'?')});
-
-$('modal-cancel').addEventListener('click',function(){$('modal').classList.remove('open');_pendingSender=null});
-
-$('modal-confirm').addEventListener('click',async function(){
+var _sender=null;
+$('btn-delete').addEventListener('click',function(){_sender=$('sender').value.trim();$('m-count').textContent=window._count;$('m-sender').textContent=_sender;$('modal').classList.add('open')});
+$('modal-cancel').addEventListener('click',()=>$('modal').classList.remove('open'));
+$('modal-ok').addEventListener('click',async function(){
   $('modal').classList.remove('open');
-  var sender=_pendingSender;
-  _pendingSender=null;
-  if(!sender)return;
   $('btn-delete').disabled=true;
   $('btn-delete').innerHTML='<span class="spinner" style="border-top-color:var(--danger)"></span> Deleting...';
   clearStatus('delete-status');
-  var res=await api('/api/delete',{sender:sender});
+  var res=await api('/api/delete',{sender:_sender});
   $('btn-delete').disabled=false;
-  $('btn-delete').innerHTML='Delete All';
+  $('btn-delete').textContent='Delete All';
   if(res.ok){
-    setStatus('delete-status','success','✓ Deleted '+res.deleted);
-    hide('confirm-wrap');clearStatus('preview-status');$('inp-sender').value='';
-    if($('sender-list').dataset.loaded)loadSenders();
+    setStatus('delete-status','success','✓ Deleted '+res.deleted);hide('confirm');clearStatus('preview-status');$('sender').value='';
+    if($('list').dataset.loaded)loadSenders();
   }else{setStatus('delete-status','error','✗ '+res.error)}
 });
 
-// SCANNER
-var allSenders=[];
+var senders=[];
 $('btn-scan').addEventListener('click',loadSenders);
 
 async function loadSenders(){
-  $('btn-scan').innerHTML='<span class="spinner"></span> Scanning...';
-  $('btn-scan').disabled=true;
-  $('sender-list').innerHTML='<div class="empty">Scanning...</div>';
-  hide('search-wrap');clearStatus('scan-status');
+  $('btn-scan').innerHTML='<span class="spinner"></span> Scanning...';$('btn-scan').disabled=true;
+  $('list').innerHTML='<div class="empty">Scanning...</div>';
+  clearStatus('scan-status');
   var res=await api('/api/senders');
   $('btn-scan').textContent='Rescan';$('btn-scan').disabled=false;
-  if(res.ok){
-    allSenders=res.senders;$('sender-list').dataset.loaded='1';show('search-wrap');renderSenders(allSenders);
-  }else{setStatus('scan-status','error','✗ '+res.error)}
+  if(res.ok){senders=res.senders;$('list').dataset.loaded='1';$('search-wrap').style.display='';renderSenders(senders)}
+  else{setStatus('scan-status','error','✗ '+res.error)}
 }
 
-var senderStore={};
+var store={};
 function renderSenders(list){
-  if(list.length===0){$('sender-list').innerHTML='<div class="empty">No senders.</div>';return}
-  senderStore={};
-  var html='';
+  if(list.length===0){$('list').innerHTML='<div class="empty">No senders.</div>';return}
+  store={};var html='';
   for(var i=0;i<list.length;i++){
     var sender=list[i][0],count=list[i][1],idx='s'+i;
-    senderStore[idx]={sender:sender,count:count};
-    html+='<div class="sender-item"><div class="sender-info"><div class="sender-name" title="'+esc(sender)+'">'+esc(sender)+'</div><div class="sender-count">'+count+' email'+(count!==1?'s':'')+' </div></div><div class="sender-actions"><button class="btn-ghost select-btn" data-idx="'+idx+'">Select</button><button class="btn-danger delete-btn" data-idx="'+idx+'">Delete</button></div></div>';
+    store[idx]={sender:sender,count:count};
+    html+='<div class="sender-item"><div class="sender-info"><div class="sender-name" title="'+esc(sender)+'">'+esc(sender)+'</div><div class="sender-count">'+count+' email'+(count!==1?'s':'')+' </div></div><div class="sender-actions"><button class="btn-ghost sel" data-idx="'+idx+'">Select</button><button class="btn-danger del" data-idx="'+idx+'">Delete</button></div></div>';
   }
-  $('sender-list').innerHTML=html;
-  
-  var selectBtns=document.querySelectorAll('.select-btn');
-  for(var i=0;i<selectBtns.length;i++){
-    selectBtns[i].addEventListener('click',function(e){
-      e.preventDefault();
-      var idx=this.getAttribute('data-idx');
-      var data=senderStore[idx];
-      if(data){prefill(data.sender)}
-    });
-  }
-  
-  var deleteBtns=document.querySelectorAll('.delete-btn');
-  for(var i=0;i<deleteBtns.length;i++){
-    deleteBtns[i].addEventListener('click',function(e){
-      e.preventDefault();
-      var idx=this.getAttribute('data-idx');
-      var data=senderStore[idx];
-      if(data){quickDelete(data.sender,data.count)}
-    });
-  }
+  $('list').innerHTML=html;
+  document.querySelectorAll('.sel').forEach(b=>b.addEventListener('click',function(){var d=store[this.getAttribute('data-idx')];if(d)prefill(d.sender)}));
+  document.querySelectorAll('.del').forEach(b=>b.addEventListener('click',function(){var d=store[this.getAttribute('data-idx')];if(d)quickDelete(d.sender,d.count)}));
 }
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 
-$('inp-search').addEventListener('input',function(){
-  var q=this.value.toLowerCase();
-  renderSenders(allSenders.filter(function(item){return item[0].toLowerCase().indexOf(q)!==-1}))
-});
+$('search').addEventListener('input',function(){var q=this.value.toLowerCase();renderSenders(senders.filter(s=>s[0].toLowerCase().indexOf(q)!==-1))});
 
-function prefill(sender){
-  var match=sender.match(/<(.+?)>/);
-  $('inp-sender').value=match?match[1]:sender;
-  $('sec-main').scrollIntoView({behavior:'smooth'});
-}
+function prefill(sender){$('sender').value=sender;$('main').scrollIntoView({behavior:'smooth'})}
+function quickDelete(sender,count){prefill(sender);_sender=sender;$('m-count').textContent=count;$('m-sender').textContent=sender;$('modal').classList.add('open')}
 
-function quickDelete(sender,count){prefill(sender);openConfirmModal($('inp-sender').value,count)}
+$('login').style.display='block';
+</script></body></html>"""
 
-showSection('login');
-</script>
-</body>
-</html>
-"""
+app=Flask(__name__)
+app.secret_key=os.environ.get("SECRET_KEY","change-this")
+app.config["PERMANENT_SESSION_LIFETIME"]=timedelta(hours=2)
+app.config["SESSION_COOKIE_SAMESITE"]="Lax"
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "change-this-in-production-please")
-app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = False
+SERVERS={"gmail.com":"imap.gmail.com","googlemail.com":"imap.gmail.com","outlook.com":"outlook.office365.com","hotmail.com":"outlook.office365.com","live.com":"outlook.office365.com","msn.com":"outlook.office365.com","yahoo.com":"imap.mail.yahoo.com","ymail.com":"imap.mail.yahoo.com","icloud.com":"imap.mail.me.com","me.com":"imap.mail.me.com","aol.com":"imap.aol.com","protonmail.com":"imap.protonmail.ch","proton.me":"imap.protonmail.ch","zoho.com":"imap.zoho.com"}
 
-IMAP_SERVERS = {
-    "gmail.com": "imap.gmail.com",
-    "googlemail.com": "imap.gmail.com",
-    "outlook.com": "outlook.office365.com",
-    "hotmail.com": "outlook.office365.com",
-    "live.com": "outlook.office365.com",
-    "msn.com": "outlook.office365.com",
-    "yahoo.com": "imap.mail.yahoo.com",
-    "ymail.com": "imap.mail.yahoo.com",
-    "icloud.com": "imap.mail.me.com",
-    "me.com": "imap.mail.me.com",
-    "aol.com": "imap.aol.com",
-    "protonmail.com": "imap.protonmail.ch",
-    "proton.me": "imap.protonmail.ch",
-    "zoho.com": "imap.zoho.com",
-}
+def get_server(email,custom=None):
+    if custom:return custom
+    domain=email.split("@")[-1].lower()
+    return SERVERS.get(domain)
 
-def get_imap_server(email_addr, custom_server=None):
-    if custom_server:
-        return custom_server
-    domain = email_addr.split("@")[-1].lower()
-    return IMAP_SERVERS.get(domain)
-
-def connect(email_addr, password, custom_server=None):
-    server = get_imap_server(email_addr, custom_server)
-    if not server:
-        raise ValueError("Unknown email provider. Enter IMAP server manually.")
-    mail = imaplib.IMAP4_SSL(server, 993)
+def connect(email,password,custom=None):
+    server=get_server(email,custom)
+    if not server:raise ValueError("Unknown provider")
+    mail=imaplib.IMAP4_SSL(server,993)
     mail.socket().settimeout(25)
-    mail.login(email_addr, password)
+    mail.login(email,password)
     return mail
 
 def decode_str(s):
-    if s is None:
-        return ""
+    if not s:return ""
     try:
-        parts = decode_header(s)
-        result = []
-        for part, enc in parts:
-            if isinstance(part, bytes):
-                result.append(part.decode(enc or "utf-8", errors="replace"))
-            else:
-                result.append(str(part))
+        parts=decode_header(s)
+        result=[]
+        for part,enc in parts:
+            if isinstance(part,bytes):result.append(part.decode(enc or "utf-8",errors="replace"))
+            else:result.append(str(part))
         return " ".join(result).strip()
-    except Exception:
-        return str(s)
+    except:return str(s)
 
-def escape_imap_string(s):
-    """Escape IMAP special characters."""
-    s = s.replace("\\", "\\\\")
-    s = s.replace('"', '\\"')
+def escape_imap(s):
+    s=s.replace("\\","\\\\")
+    s=s.replace('"','\\"')
     return s
 
 def get_folders(mail):
-    """Get all selectable IMAP folders."""
-    status, folder_list = mail.list()
-    folders = []
-    if status != "OK":
-        return ["INBOX"]
+    status,folder_list=mail.list()
+    folders=[]
+    if status!="OK":return ["INBOX"]
     for item in folder_list:
-        if item is None:
-            continue
-        decoded = item.decode("utf-8", errors="replace")
-        if "\\Noselect" in decoded or "\\NoSelect" in decoded:
-            continue
-        match = re.search(r' (?:"([^"]+)"|([^\s"][^\s]*))$', decoded)
+        if not item:continue
+        decoded=item.decode("utf-8",errors="replace")
+        if "\\Noselect" in decoded:continue
+        match=re.search(r' (?:"([^"]+)"|([^\s"][^\s]*))$',decoded)
         if match:
-            name = match.group(1) or match.group(2)
-            if name:
-                folders.append(name)
+            name=match.group(1) or match.group(2)
+            if name:folders.append(name)
     return folders if folders else ["INBOX"]
 
-def select_folder(mail, folder):
-    for attempt in ['"{}"'.format(folder), folder]:
+def select_folder_ro(mail,folder):
+    for attempt in ['"{}"'.format(folder),folder]:
         try:
-            status, data = mail.select(attempt, readonly=False)
-            if status == "OK":
-                return True
-        except Exception:
-            pass
+            status,data=mail.select(attempt,readonly=True)
+            if status=="OK":return True
+        except:pass
     return False
 
-def select_folder_readonly(mail, folder):
-    for attempt in ['"{}"'.format(folder), folder]:
+def select_folder(mail,folder):
+    for attempt in ['"{}"'.format(folder),folder]:
         try:
-            status, data = mail.select(attempt, readonly=True)
-            if status == "OK":
-                return True
-        except Exception:
-            pass
+            status,data=mail.select(attempt,readonly=False)
+            if status=="OK":return True
+        except:pass
     return False
 
-def search_from(mail, sender_query):
-    """Search for emails from a sender."""
-    all_ids = set()
-    escaped = escape_imap_string(sender_query)
-    queries = ['FROM "{}"'.format(escaped)]
-    if " " not in sender_query and "\\" not in sender_query:
-        queries.append('FROM {}'.format(escaped))
+def search_from(mail,sender):
+    all_ids=set()
+    escaped=escape_imap(sender)
+    queries=['FROM "{}"'.format(escaped)]
+    if " " not in sender and "\\" not in sender:queries.append('FROM {}'.format(escaped))
     for q in queries:
         try:
-            status, data = mail.search(None, q)
-            if status == "OK" and data and data[0]:
-                for uid in data[0].split():
-                    all_ids.add(uid)
-        except Exception:
-            continue
+            status,data=mail.search(None,q)
+            if status=="OK" and data and data[0]:
+                for uid in data[0].split():all_ids.add(uid)
+        except:pass
     return list(all_ids)
 
-SKIP_FOLDER_KEYWORDS = ["trash", "deleted", "junk", "spam", "drafts", "sent", "archive", "all mail", "important", "starred", "bin", "[gmail]", "outbox", "chat"]
+SKIP=["trash","deleted","junk","spam","drafts","sent","archive","all mail","[gmail]","outbox"]
+def skip_folder(name):return any(k in name.lower() for k in SKIP)
 
-def should_skip_folder(name):
-    lower = name.lower()
-    return any(kw in lower for kw in SKIP_FOLDER_KEYWORDS)
-
-def fetch_senders_from_folder(mail, folder, max_emails=2000):
-    """Fetch senders from a folder."""
-    sender_counts = {}
-    if not select_folder_readonly(mail, folder):
-        return sender_counts
-    status, data = mail.search(None, "ALL")
-    if status != "OK" or not data or not data[0]:
-        return sender_counts
-    ids = data[0].split()
-    if not ids:
-        return sender_counts
-    ids = ids[-max_emails:]
-    for i in range(0, len(ids), 1000):
-        chunk_ids = ids[i:i+1000]
-        id_set = b",".join(chunk_ids).decode()
+def fetch_from_folder(mail,folder,max_emails=2000):
+    counts={}
+    if not select_folder_ro(mail,folder):return counts
+    status,data=mail.search(None,"ALL")
+    if status!="OK" or not data or not data[0]:return counts
+    ids=data[0].split()
+    if not ids:return counts
+    ids=ids[-max_emails:]
+    for i in range(0,len(ids),1000):
+        chunk_ids=ids[i:i+1000]
+        id_set=b",".join(chunk_ids).decode()
         try:
-            status, msg_data = mail.fetch(id_set, "(BODY.PEEK[HEADER.FIELDS (FROM)])")
-            if status != "OK" or not msg_data:
-                continue
+            status,msg_data=mail.fetch(id_set,"(BODY.PEEK[HEADER.FIELDS (FROM)])")
+            if status!="OK" or not msg_data:continue
             for chunk in msg_data:
-                if isinstance(chunk, tuple) and len(chunk) >= 2:
+                if isinstance(chunk,tuple) and len(chunk)>=2:
                     try:
-                        msg = email.message_from_bytes(chunk[1])
-                        sender = decode_str(msg.get("From", "")).strip()
-                        if sender:
-                            sender_counts[sender] = sender_counts.get(sender, 0) + 1
-                    except Exception:
-                        continue
-        except Exception:
-            continue
-    return sender_counts
+                        msg=email.message_from_bytes(chunk[1])
+                        sender=decode_str(msg.get("From","")).strip()
+                        if sender:counts[sender]=counts.get(sender,0)+1
+                    except:pass
+        except:pass
+    return counts
 
 @app.route("/")
-def index():
-    return HTML_PAGE
+def index():return HTML
 
-@app.route("/api/login", methods=["POST"])
+@app.route("/api/login",methods=["POST"])
 def login():
-    data = request.json
-    email_addr = data.get("email", "").strip()
-    password = data.get("password", "").strip()
-    custom_imap = data.get("imap_server", "").strip() or None
-
-    if not email_addr or not password:
-        return jsonify({"ok": False, "error": "Email and password required."}), 400
-    
-    if "@" not in email_addr or "." not in email_addr.split("@")[-1]:
-        return jsonify({"ok": False, "error": "Invalid email format."}), 400
-
+    data=request.json
+    email_addr=data.get("email","").strip()
+    password=data.get("password","").strip()
+    custom_imap=data.get("imap_server","").strip() or None
+    if not email_addr or not password:return jsonify({"ok":False,"error":"Email and password required."}),400
+    if "@" not in email_addr:return jsonify({"ok":False,"error":"Invalid email."}),400
     try:
-        mail = connect(email_addr, password, custom_imap)
-        try:
-            mail.logout()
-        except Exception:
-            pass
-        session.permanent = True
-        session["email"] = email_addr
-        session["password"] = password
-        session["imap_server"] = custom_imap
-        return jsonify({"ok": True})
-    except imaplib.IMAP4.error:
-        return jsonify({"ok": False, "error": "Login failed. Check email/password."}), 401
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        mail=connect(email_addr,password,custom_imap)
+        try:mail.logout()
+        except:pass
+        session.permanent=True
+        session["email"]=email_addr
+        session["password"]=password
+        session["imap_server"]=custom_imap
+        return jsonify({"ok":True})
+    except imaplib.IMAP4.error:return jsonify({"ok":False,"error":"Login failed."}),401
+    except Exception as e:return jsonify({"ok":False,"error":str(e)}),500
 
-@app.route("/api/logout", methods=["POST"])
+@app.route("/api/logout",methods=["POST"])
 def logout():
     session.clear()
-    return jsonify({"ok": True})
+    return jsonify({"ok":True})
 
-@app.route("/api/senders", methods=["GET"])
+@app.route("/api/senders",methods=["GET"])
 def list_senders():
-    if "email" not in session:
-        return jsonify({"ok": False, "error": "Not logged in."}), 401
-
+    if "email" not in session:return jsonify({"ok":False,"error":"Not logged in."}),401
     try:
-        mail = connect(session["email"], session["password"], session.get("imap_server"))
-        sender_counts = {}
-        folders = get_folders(mail)
-
-        priority = [f for f in folders if f.upper() == "INBOX"]
-        others = [f for f in folders if f.upper() != "INBOX" and not should_skip_folder(f)]
-        scan_order = priority + others
-
-        for folder in scan_order[:20]:
+        mail=connect(session["email"],session["password"],session.get("imap_server"))
+        counts={}
+        folders=get_folders(mail)
+        priority=[f for f in folders if f.upper()=="INBOX"]
+        others=[f for f in folders if f.upper()!="INBOX" and not skip_folder(f)]
+        scan_folders=priority+others[:20]
+        for folder in scan_folders:
             try:
-                counts = fetch_senders_from_folder(mail, folder, max_emails=2000)
-                for sender, count in counts.items():
-                    sender_counts[sender] = sender_counts.get(sender, 0) + count
-            except Exception:
-                continue
+                c=fetch_from_folder(mail,folder,2000)
+                for sender,count in c.items():counts[sender]=counts.get(sender,0)+count
+            except:pass
+        try:mail.logout()
+        except:pass
+        sorted_senders=sorted(counts.items(),key=lambda x:x[1],reverse=True)
+        return jsonify({"ok":True,"senders":sorted_senders[:100]})
+    except Exception as e:return jsonify({"ok":False,"error":str(e)}),500
 
-        try:
-            mail.logout()
-        except Exception:
-            pass
-
-        sorted_senders = sorted(sender_counts.items(), key=lambda x: x[1], reverse=True)
-        return jsonify({"ok": True, "senders": sorted_senders[:100]})
-
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route("/api/preview", methods=["POST"])
+@app.route("/api/preview",methods=["POST"])
 def preview():
-    if "email" not in session:
-        return jsonify({"ok": False, "error": "Not logged in."}), 401
-
-    sender_query = request.json.get("sender", "").strip()
-    if not sender_query:
-        return jsonify({"ok": False, "error": "Enter a sender."}), 400
-
+    if "email" not in session:return jsonify({"ok":False,"error":"Not logged in."}),401
+    sender=request.json.get("sender","").strip()
+    if not sender:return jsonify({"ok":False,"error":"Enter a sender."}),400
     try:
-        mail = connect(session["email"], session["password"], session.get("imap_server"))
-        folders = get_folders(mail)
-        folders = folders[:20]
-        total = 0
-
-        for folder in folders:
+        mail=connect(session["email"],session["password"],session.get("imap_server"))
+        folders=get_folders(mail)
+        total=0
+        for folder in folders[:20]:
             try:
-                if not select_folder_readonly(mail, folder):
-                    continue
-                ids = search_from(mail, sender_query)
-                total += len(ids)
-            except Exception:
-                continue
+                if select_folder_ro(mail,folder):total+=len(search_from(mail,sender))
+            except:pass
+        try:mail.logout()
+        except:pass
+        return jsonify({"ok":True,"count":total})
+    except Exception as e:return jsonify({"ok":False,"error":str(e)}),500
 
-        try:
-            mail.logout()
-        except Exception:
-            pass
-        return jsonify({"ok": True, "count": total})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route("/api/delete", methods=["POST"])
+@app.route("/api/delete",methods=["POST"])
 def delete():
-    if "email" not in session:
-        return jsonify({"ok": False, "error": "Not logged in."}), 401
-
-    sender_query = request.json.get("sender", "").strip()
-    if not sender_query:
-        return jsonify({"ok": False, "error": "Enter a sender."}), 400
-
+    if "email" not in session:return jsonify({"ok":False,"error":"Not logged in."}),401
+    sender=request.json.get("sender","").strip()
+    if not sender:return jsonify({"ok":False,"error":"Enter a sender."}),400
     try:
-        mail = connect(session["email"], session["password"], session.get("imap_server"))
-        folders = get_folders(mail)
-        total_deleted = 0
-
+        mail=connect(session["email"],session["password"],session.get("imap_server"))
+        folders=get_folders(mail)
+        total=0
         for folder in folders:
             try:
-                if not select_folder(mail, folder):
-                    continue
-                ids = search_from(mail, sender_query)
-                if not ids:
-                    continue
-                id_set = b",".join(ids).decode()
-                mail.store(id_set, "+FLAGS", "\\Deleted")
-                mail.expunge()
-                total_deleted += len(ids)
-            except Exception:
-                continue
+                if select_folder(mail,folder):
+                    ids=search_from(mail,sender)
+                    if ids:
+                        id_set=b",".join(ids).decode()
+                        mail.store(id_set,"+FLAGS","\\Deleted")
+                        mail.expunge()
+                        total+=len(ids)
+            except:pass
+        try:mail.logout()
+        except:pass
+        return jsonify({"ok":True,"deleted":total})
+    except Exception as e:return jsonify({"ok":False,"error":str(e)}),500
 
-        try:
-            mail.logout()
-        except Exception:
-            pass
-        return jsonify({"ok": True, "deleted": total_deleted})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+if __name__=="__main__":
+    port=int(os.environ.get("PORT",5000))
+    app.run(host="0.0.0.0",port=port)
