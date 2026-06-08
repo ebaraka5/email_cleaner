@@ -235,9 +235,15 @@ async function loadSenders(){
 function renderSenders(list){
   if(list.length===0){$('sender-list').innerHTML='<div class="empty">No senders.</div>';return}
   $('sender-list').innerHTML=list.map(function(item){
-    var sender=item[0],count=item[1];
-    return '<div class="sender-item"><div class="sender-info"><div class="sender-name" title="'+esc(sender)+'">'+esc(sender)+'</div><div class="sender-count">'+count+' email'+(count!==1?'s':'')+' </div></div><div class="sender-actions"><button class="btn-ghost" onclick="prefill('+JSON.stringify(sender)+')">Select</button><button class="btn-danger" onclick="quickDelete('+JSON.stringify(sender)+','+count+')">Delete</button></div></div>';
-  }).join('')
+    var sender=item[0],count=item[1],id='sender-'+Math.random().toString(36);
+    return '<div class="sender-item" id="'+id+'"><div class="sender-info"><div class="sender-name" title="'+esc(sender)+'">'+esc(sender)+'</div><div class="sender-count">'+count+' email'+(count!==1?'s':'')+' </div></div><div class="sender-actions"><button class="btn-ghost" data-sender="'+esc(sender)+'" class="btn-select">Select</button><button class="btn-danger" data-sender="'+esc(sender)+'" data-count="'+count+'" class="btn-quickdel">Delete</button></div></div>';
+  }).join('');
+  document.querySelectorAll('.btn-select').forEach(function(btn){
+    btn.addEventListener('click',function(){prefill(this.getAttribute('data-sender'))});
+  });
+  document.querySelectorAll('.btn-quickdel').forEach(function(btn){
+    btn.addEventListener('click',function(){quickDelete(this.getAttribute('data-sender'),parseInt(this.getAttribute('data-count')))});
+  });
 }
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
