@@ -232,19 +232,26 @@ async function loadSenders(){
   }else{setStatus('scan-status','error','✗ '+res.error)}
 }
 
+var senderStore={};
 function renderSenders(list){
   if(list.length===0){$('sender-list').innerHTML='<div class="empty">No senders.</div>';return}
-  $('sender-list').innerHTML=list.map(function(item){
-    var sender=item[0],count=item[1],id='sender-'+Math.random().toString(36);
-    return '<div class="sender-item" id="'+id+'"><div class="sender-info"><div class="sender-name" title="'+esc(sender)+'">'+esc(sender)+'</div><div class="sender-count">'+count+' email'+(count!==1?'s':'')+' </div></div><div class="sender-actions"><button class="btn-ghost" data-sender="'+esc(sender)+'" class="btn-select">Select</button><button class="btn-danger" data-sender="'+esc(sender)+'" data-count="'+count+'" class="btn-quickdel">Delete</button></div></div>';
-  }).join('');
-  document.querySelectorAll('.btn-select').forEach(function(btn){
-    btn.addEventListener('click',function(){prefill(this.getAttribute('data-sender'))});
-  });
-  document.querySelectorAll('.btn-quickdel').forEach(function(btn){
-    btn.addEventListener('click',function(){quickDelete(this.getAttribute('data-sender'),parseInt(this.getAttribute('data-count')))});
-  });
+  senderStore={};
+  var html='';
+  for(var i=0;i<list.length;i++){
+    var sender=list[i][0],count=list[i][1],idx='s'+i;
+    senderStore[idx]={sender:sender,count:count};
+    html+='<div class="sender-item"><div class="sender-info"><div class="sender-name" title="'+esc(sender)+'">'+esc(sender)+'</div><div class="sender-count">'+count+' email'+(count!==1?'s':'')+' </div></div><div class="sender-actions"><button class="btn-ghost" onclick="window._selectClick(''+idx+'')">Select</button><button class="btn-danger" onclick="window._deleteClick(''+idx+'')">Delete</button></div></div>';
+  }
+  $('sender-list').innerHTML=html;
 }
+
+window._selectClick=function(idx){
+  if(senderStore[idx]){prefill(senderStore[idx].sender)}
+};
+
+window._deleteClick=function(idx){
+  if(senderStore[idx]){quickDelete(senderStore[idx].sender,senderStore[idx].count)}
+};
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 
