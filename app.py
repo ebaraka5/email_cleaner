@@ -3,6 +3,8 @@ import imaplib
 import email
 from email.header import decode_header
 import os
+import re
+from datetime import timedelta
 
 HTML_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -13,9 +15,7 @@ HTML_PAGE = """<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
-  /* ── Reset & Variables ── */
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
   :root {
     --bg:        #0a0a0f;
     --surface:   #13131a;
@@ -31,7 +31,6 @@ HTML_PAGE = """<!DOCTYPE html>
     --radius:    12px;
     --transition: 0.18s cubic-bezier(.4,0,.2,1);
   }
-
   html { font-size: 16px; }
   body {
     background: var(--bg);
@@ -46,8 +45,6 @@ HTML_PAGE = """<!DOCTYPE html>
       radial-gradient(ellipse 80% 40% at 50% -10%, rgba(232,255,90,0.07) 0%, transparent 60%),
       radial-gradient(ellipse 40% 30% at 90% 80%, rgba(255,90,126,0.05) 0%, transparent 50%);
   }
-
-  /* ── Header ── */
   header {
     width: 100%;
     max-width: 700px;
@@ -71,8 +68,6 @@ HTML_PAGE = """<!DOCTYPE html>
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
-
-  /* ── Cards ── */
   .card {
     width: 100%;
     max-width: 700px;
@@ -95,8 +90,6 @@ HTML_PAGE = """<!DOCTYPE html>
     color: var(--muted);
     margin-bottom: 1.25rem;
   }
-
-  /* ── Form elements ── */
   label {
     display: block;
     font-family: var(--mono);
@@ -122,12 +115,6 @@ HTML_PAGE = """<!DOCTYPE html>
   }
   input:focus { border-color: var(--accent); }
   input::placeholder { color: var(--muted); }
-
-  .row { display: flex; gap: 0.75rem; align-items: flex-end; }
-  .row > * { flex: 1; }
-  .row label { margin-top: 0; }
-
-  /* ── Buttons ── */
   button {
     font-family: var(--sans);
     font-weight: 600;
@@ -151,7 +138,6 @@ HTML_PAGE = """<!DOCTYPE html>
   .btn-primary:hover { background: #f5ff80; transform: translateY(-1px); }
   .btn-primary:active { transform: translateY(0); }
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-
   .btn-danger {
     background: transparent;
     color: var(--danger);
@@ -160,7 +146,6 @@ HTML_PAGE = """<!DOCTYPE html>
     font-size: 0.8rem;
   }
   .btn-danger:hover { background: rgba(255,68,68,0.1); }
-
   .btn-ghost {
     background: transparent;
     color: var(--muted);
@@ -169,8 +154,6 @@ HTML_PAGE = """<!DOCTYPE html>
     padding: 0.45rem 0.9rem;
   }
   .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
-
-  /* ── Status bar ── */
   .status {
     font-family: var(--mono);
     font-size: 0.78rem;
@@ -182,8 +165,6 @@ HTML_PAGE = """<!DOCTYPE html>
   .status.info    { background: rgba(232,255,90,0.08);  color: var(--accent);  display: block; }
   .status.error   { background: rgba(255,68,68,0.08);   color: var(--danger);  display: block; }
   .status.success { background: rgba(74,255,145,0.08);  color: var(--success); display: block; }
-
-  /* ── Logged-in badge ── */
   .who {
     font-family: var(--mono);
     font-size: 0.78rem;
@@ -200,8 +181,6 @@ HTML_PAGE = """<!DOCTYPE html>
     display: inline-block;
     box-shadow: 0 0 6px var(--success);
   }
-
-  /* ── Sender list ── */
   .sender-list {
     max-height: 380px;
     overflow-y: auto;
@@ -233,8 +212,6 @@ HTML_PAGE = """<!DOCTYPE html>
     color: var(--muted);
   }
   .sender-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
-
-  /* ── Search box ── */
   .search-wrap { position: relative; margin-bottom: 1rem; }
   .search-wrap input { padding-left: 2.2rem; }
   .search-icon {
@@ -246,17 +223,6 @@ HTML_PAGE = """<!DOCTYPE html>
     font-size: 0.85rem;
     pointer-events: none;
   }
-
-  /* ── Custom sender input ── */
-  .custom-row {
-    display: flex;
-    gap: 0.75rem;
-    align-items: flex-end;
-    margin-top: 1rem;
-  }
-  .custom-row > div { flex: 1; }
-
-  /* ── Modal ── */
   .modal-overlay {
     position: fixed; inset: 0;
     background: rgba(0,0,0,0.7);
@@ -282,8 +248,6 @@ HTML_PAGE = """<!DOCTYPE html>
   .modal p { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); margin-bottom: 1.5rem; line-height: 1.6; }
   .modal p strong { color: var(--accent2); }
   .modal-actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
-
-  /* ── Loading spinner ── */
   .spinner {
     display: inline-block;
     width: 14px; height: 14px;
@@ -295,12 +259,8 @@ HTML_PAGE = """<!DOCTYPE html>
     margin-right: 6px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* ── Sections ── */
   [data-section] { display: none; }
   [data-section].active { display: block; }
-
-  /* ── Tip box ── */
   .tip {
     background: rgba(232,255,90,0.04);
     border: 1px solid rgba(232,255,90,0.15);
@@ -313,8 +273,6 @@ HTML_PAGE = """<!DOCTYPE html>
     margin-top: 1rem;
   }
   .tip strong { color: var(--accent); }
-
-  /* ── Empty state ── */
   .empty {
     text-align: center;
     padding: 2rem;
@@ -331,31 +289,24 @@ HTML_PAGE = """<!DOCTYPE html>
   <div class="tagline">// bulk email cleanup tool</div>
 </header>
 
-<!-- ══ LOGIN SECTION ══ -->
 <div class="card" data-section="login" id="sec-login">
   <h2>// Connect your email</h2>
-
   <label>Email address</label>
   <input type="email" id="inp-email" placeholder="you@example.com" autocomplete="email">
-
   <label>Password / App Password</label>
   <input type="password" id="inp-pass" placeholder="••••••••••••" autocomplete="current-password">
-
   <label>IMAP server <span style="color:var(--muted);font-weight:400">(auto-detected for Gmail, Outlook, Yahoo — leave blank)</span></label>
   <input type="text" id="inp-imap" placeholder="e.g. imap.yourprovider.com">
-
   <div class="tip">
     <strong>Using Gmail, Outlook, or Yahoo?</strong> You need an <strong>App Password</strong>, not your regular password.<br>
     Gmail → myaccount.google.com/apppasswords &nbsp;|&nbsp;
     Yahoo → account.yahoo.com/security &nbsp;|&nbsp;
     Outlook → account.microsoft.com/security
   </div>
-
   <button class="btn-primary" id="btn-login">Connect →</button>
   <div class="status" id="login-status"></div>
 </div>
 
-<!-- ══ MAIN SECTION ══ -->
 <div class="card" data-section="main" id="sec-main">
   <div class="who">
     <span class="dot"></span>
@@ -363,47 +314,30 @@ HTML_PAGE = """<!DOCTYPE html>
     <button class="btn-ghost" id="btn-logout">disconnect</button>
   </div>
   <h2>// Delete by sender</h2>
-
-  <div class="custom-row">
-    <div>
-      <label>Sender email or name to delete</label>
-      <input type="text" id="inp-sender" placeholder="spam@example.com">
-    </div>
-    <button class="btn-primary" style="width:auto;margin-top:0;flex-shrink:0" id="btn-preview">Preview</button>
-  </div>
-
+  <label>Sender email or name to delete</label>
+  <input type="text" id="inp-sender" placeholder="spam@example.com">
+  <button class="btn-primary" id="btn-preview" style="margin-top:0.5rem">Preview →</button>
   <div class="status" id="preview-status"></div>
-
   <div id="confirm-wrap" style="display:none;margin-top:1rem;">
-    <button class="btn-danger" style="width:100%;padding:0.8rem" id="btn-delete">
-      🗑 Delete All Matching Emails
-    </button>
+    <button class="btn-danger" style="width:100%;padding:0.8rem" id="btn-delete">🗑 Delete All Matching Emails</button>
   </div>
-
   <div class="status" id="delete-status"></div>
 </div>
 
-<div class="card" data-section="senders" id="sec-senders" style="display:none">
+<div class="card" data-section="senders" id="sec-senders">
   <h2>// Top senders in your mailbox</h2>
-  <p style="font-family:var(--mono);font-size:0.75rem;color:var(--muted);margin-bottom:1rem">
-    Scan your mailbox to see who's filling it up — then delete with one click.
-  </p>
-  <button class="btn-primary" id="btn-scan" style="margin-top:0;margin-bottom:1rem">
-    Scan my mailbox
-  </button>
-
-  <div class="search-wrap" id="search-wrap" style="display:none">
+  <p style="font-family:var(--mono);font-size:0.75rem;color:var(--muted);margin-bottom:1rem">Scan your mailbox to see who's filling it up — then delete with one click.</p>
+  <button class="btn-primary" id="btn-scan" style="margin-top:0">Scan my mailbox</button>
+  <div class="search-wrap" id="search-wrap" style="display:none;margin-top:1rem">
     <span class="search-icon">⌕</span>
     <input type="text" id="inp-search" placeholder="Filter senders...">
   </div>
-
   <div class="sender-list" id="sender-list">
     <div class="empty">Click "Scan my mailbox" to load senders.</div>
   </div>
   <div class="status" id="scan-status"></div>
 </div>
 
-<!-- ══ CONFIRM MODAL ══ -->
 <div class="modal-overlay" id="modal">
   <div class="modal">
     <h3>Are you sure?</h3>
@@ -416,14 +350,13 @@ HTML_PAGE = """<!DOCTYPE html>
 </div>
 
 <script>
-  // ── Helpers ──────────────────────────────────────────────────────────────
   const $ = id => document.getElementById(id);
   const show = id => $(id).style.display = '';
   const hide = id => $(id).style.display = 'none';
 
   function setStatus(id, type, msg) {
     const el = $(id);
-    el.className = `status ${type}`;
+    el.className = 'status ' + type;
     el.textContent = msg;
   }
   function clearStatus(id) {
@@ -434,7 +367,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
   function showSection(name) {
     ['login','main','senders'].forEach(s => {
-      const el = $(`sec-${s}`);
+      const el = $('sec-'+s);
       if (s === name) {
         el.style.display = 'block';
         el.style.animation = 'fadeUp 0.35s ease both';
@@ -452,7 +385,7 @@ HTML_PAGE = """<!DOCTYPE html>
     return r.json();
   }
 
-  // ── Login ─────────────────────────────────────────────────────────────────
+  // LOGIN
   $('btn-login').addEventListener('click', async () => {
     const btn = $('btn-login');
     btn.disabled = true;
@@ -471,12 +404,11 @@ HTML_PAGE = """<!DOCTYPE html>
     } else {
       setStatus('login-status', 'error', '✗ ' + res.error);
     }
-
     btn.disabled = false;
     btn.textContent = 'Connect →';
   });
 
-  // ── Logout ────────────────────────────────────────────────────────────────
+  // LOGOUT
   $('btn-logout').addEventListener('click', async () => {
     await api('/api/logout', {});
     showSection('login');
@@ -486,7 +418,7 @@ HTML_PAGE = """<!DOCTYPE html>
     clearStatus('delete-status');
   });
 
-  // ── Preview ───────────────────────────────────────────────────────────────
+  // PREVIEW
   $('btn-preview').addEventListener('click', async () => {
     const sender = $('inp-sender').value.trim();
     if (!sender) { setStatus('preview-status', 'error', 'Enter a sender email or name.'); return; }
@@ -496,14 +428,14 @@ HTML_PAGE = """<!DOCTYPE html>
     $('btn-preview').disabled = true;
 
     const res = await api('/api/preview', { sender });
-    $('btn-preview').textContent = 'Preview';
+    $('btn-preview').textContent = 'Preview →';
     $('btn-preview').disabled = false;
 
     if (res.ok) {
       if (res.count === 0) {
-        setStatus('preview-status', 'info', `No emails found from "${sender}".`);
+        setStatus('preview-status', 'info', 'No emails found from "' + sender + '".');
       } else {
-        setStatus('preview-status', 'info', `Found ${res.count} email(s) from "${sender}" across all folders.`);
+        setStatus('preview-status', 'info', 'Found ' + res.count + ' email(s) from "' + sender + '" across all folders.');
         show('confirm-wrap');
         window._pendingCount = res.count;
       }
@@ -512,8 +444,7 @@ HTML_PAGE = """<!DOCTYPE html>
     }
   });
 
-  // ── Delete (with modal confirm) ───────────────────────────────────────────
-  // Fix: single source of truth for pending sender — avoids double-listener bugs
+  // MODAL CONFIRM
   let _pendingSender = null;
 
   function openConfirmModal(sender, count) {
@@ -548,7 +479,7 @@ HTML_PAGE = """<!DOCTYPE html>
     $('btn-delete').innerHTML = '🗑 Delete All Matching Emails';
 
     if (res.ok) {
-      setStatus('delete-status', 'success', `✓ Deleted ${res.deleted} email(s) from "${sender}".`);
+      setStatus('delete-status', 'success', '✓ Deleted ' + res.deleted + ' email(s) from "' + sender + '".');
       hide('confirm-wrap');
       clearStatus('preview-status');
       $('inp-sender').value = '';
@@ -558,7 +489,7 @@ HTML_PAGE = """<!DOCTYPE html>
     }
   });
 
-  // ── Sender Scanner ────────────────────────────────────────────────────────
+  // SCANNER
   let allSenders = [];
 
   $('btn-scan').addEventListener('click', loadSenders);
@@ -589,59 +520,57 @@ HTML_PAGE = """<!DOCTYPE html>
       $('sender-list').innerHTML = '<div class="empty">No senders found.</div>';
       return;
     }
-    $('sender-list').innerHTML = list.map(([sender, count]) => `
-      <div class="sender-item">
-        <div class="sender-info">
-          <div class="sender-name" title="${esc(sender)}">${esc(sender)}</div>
-          <div class="sender-count">${count} email${count !== 1 ? 's' : ''}</div>
-        </div>
-        <div class="sender-actions">
-          <button class="btn-ghost" onclick="prefill(${JSON.stringify(sender)})">Select</button>
-          <button class="btn-danger" onclick="quickDelete(${JSON.stringify(sender)}, ${count})">Delete</button>
-        </div>
-      </div>
-    `).join('');
+    $('sender-list').innerHTML = list.map(function(item) {
+      var sender = item[0];
+      var count = item[1];
+      return '<div class="sender-item">' +
+        '<div class="sender-info">' +
+          '<div class="sender-name" title="' + esc(sender) + '">' + esc(sender) + '</div>' +
+          '<div class="sender-count">' + count + ' email' + (count !== 1 ? 's' : '') + '</div>' +
+        '</div>' +
+        '<div class="sender-actions">' +
+          '<button class="btn-ghost" onclick="prefill(' + JSON.stringify(sender) + ')">Select</button>' +
+          '<button class="btn-danger" onclick="quickDelete(' + JSON.stringify(sender) + ', ' + count + ')">Delete</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
   }
 
   function esc(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  $('inp-search').addEventListener('input', () => {
-    const q = $('inp-search').value.toLowerCase();
-    renderSenders(allSenders.filter(([s]) => s.toLowerCase().includes(q)));
+  $('inp-search').addEventListener('input', function() {
+    var q = this.value.toLowerCase();
+    renderSenders(allSenders.filter(function(item) {
+      return item[0].toLowerCase().indexOf(q) !== -1;
+    }));
   });
 
   function prefill(sender) {
-    // Extract just the email address if wrapped in Name <email>
-    const match = sender.match(/<(.+?)>/);
+    var match = sender.match(/<(.+?)>/);
     $('inp-sender').value = match ? match[1] : sender;
     $('sec-main').scrollIntoView({ behavior: 'smooth' });
   }
 
   function quickDelete(sender, count) {
-    // Fix: use shared modal opener — no more conflicting onclick handlers
-    const match = sender.match(/<(.+?)>/);
-    const emailOnly = match ? match[1] : sender;
-    openConfirmModal(emailOnly, count);
+    prefill(sender);
+    openConfirmModal($('inp-sender').value, count);
   }
 
-  // Show login section on page load
+  // Show login on load
   showSection('login');
 </script>
 </body>
 </html>
 """
 
-from datetime import timedelta
-
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change-this-in-production-please")
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=2)
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = False  # set True if using HTTPS only
+app.config["SESSION_COOKIE_SECURE"] = False
 
-# ── IMAP server presets ───────────────────────────────────────────────────────
 IMAP_SERVERS = {
     "gmail.com":        "imap.gmail.com",
     "googlemail.com":   "imap.gmail.com",
@@ -669,10 +598,16 @@ def connect(email_addr, password, custom_server=None):
     server = get_imap_server(email_addr, custom_server)
     if not server:
         raise ValueError("Unknown email provider. Please enter your IMAP server manually.")
-    mail = imaplib.IMAP4_SSL(server, 993)
-    mail.socket().settimeout(25)  # Fix: don't hang forever on unresponsive servers
-    mail.login(email_addr, password)
-    return mail
+    try:
+        mail = imaplib.IMAP4_SSL(server, 993)
+        mail.socket().settimeout(25)
+        mail.login(email_addr, password)
+        return mail
+    except imaplib.IMAP4.error as e:
+        raise imaplib.IMAP4.error("Login failed: " + str(e))
+    except Exception as e:
+        # Network error, timeout, etc.
+        raise Exception("Connection error: " + str(e))
 
 def decode_str(s):
     if s is None:
@@ -690,8 +625,7 @@ def decode_str(s):
         return str(s)
 
 def get_folders(mail):
-    """Return a robust list of selectable folder names."""
-    import re
+    """Get all selectable IMAP folders, skipping non-selectable system folders."""
     status, folder_list = mail.list()
     folders = []
     if status != "OK":
@@ -700,12 +634,8 @@ def get_folders(mail):
         if item is None:
             continue
         decoded = item.decode("utf-8", errors="replace")
-        # Skip non-selectable folders
         if "\\Noselect" in decoded or "\\NoSelect" in decoded:
             continue
-        # Robustly extract folder name — handles spaces, special chars, quoted names
-        # IMAP LIST format: (\Flags) "separator" "Folder Name" or NIL "Folder Name"
-        # The folder name is always at the end, optionally quoted
         match = re.search(r' (?:"([^"]+)"|([^"\s][^\s]*))$', decoded)
         if match:
             name = match.group(1) or match.group(2)
@@ -714,9 +644,7 @@ def get_folders(mail):
     return folders if folders else ["INBOX"]
 
 def select_folder(mail, folder):
-    """Try selecting a folder, handling quoting issues."""
-    # Try quoted first, then unquoted
-    for attempt in [f'"{folder}"', folder]:
+    for attempt in ['"{}"'.format(folder), folder]:
         try:
             status, data = mail.select(attempt, readonly=False)
             if status == "OK":
@@ -726,7 +654,7 @@ def select_folder(mail, folder):
     return False
 
 def select_folder_readonly(mail, folder):
-    for attempt in [f'"{folder}"', folder]:
+    for attempt in ['"{}"'.format(folder), folder]:
         try:
             status, data = mail.select(attempt, readonly=True)
             if status == "OK":
@@ -735,62 +663,35 @@ def select_folder_readonly(mail, folder):
             pass
     return False
 
-def search_from(mail, sender_query):
-    """Search for emails from a sender, collecting results from all query formats."""
-    # Fix: collect all unique IDs across query formats, don't stop at first hit
-    all_ids = set()
-    queries = [
-        f'FROM "{sender_query}"',
-    ]
-    # Only add unquoted form if it looks like a plain email (no spaces)
-    if " " not in sender_query:
-        queries.append(f'FROM {sender_query}')
+def escape_imap_string(s):
+    """Escape special IMAP characters to prevent injection."""
+    # In IMAP, quote and backslash are special; double them
+    s = s.replace('\\', '\\\\')  # backslash -> double backslash
+    s = s.replace('"', '\\"')        # quote -> backslash quote
+    return s
 
+def search_from(mail, sender_query):
+    """Search for emails from a sender using IMAP FROM field."""
+    all_ids = set()
+    escaped = escape_imap_string(sender_query)
+    queries = ['FROM "{}"'.format(escaped)]
+    # Only try unquoted form if it doesn't contain spaces or special chars
+    if " " not in sender_query and "\\" not in sender_query and '"' not in sender_query:
+        queries.append('FROM {}'.format(escaped))
     for q in queries:
         try:
             status, data = mail.search(None, q)
             if status == "OK" and data and data[0]:
                 for uid in data[0].split():
                     all_ids.add(uid)
+        except imaplib.IMAP4.error:
+            # IMAP command error - try next query format
+            continue
         except Exception:
+            # Timeout or other network error
             continue
     return list(all_ids)
 
-# ── Routes ────────────────────────────────────────────────────────────────────
-
-@app.route("/")
-def index():
-    return HTML_PAGE
-
-@app.route("/api/login", methods=["POST"])
-def login():
-    data = request.json
-    email_addr  = data.get("email", "").strip()
-    password    = data.get("password", "").strip()
-    custom_imap = data.get("imap_server", "").strip() or None
-
-    if not email_addr or not password:
-        return jsonify({"ok": False, "error": "Email and password are required."}), 400
-
-    try:
-        mail = connect(email_addr, password, custom_imap)
-        mail.logout()
-        session.permanent = True  # Fix: persist session across requests
-        session["email"]       = email_addr
-        session["password"]    = password
-        session["imap_server"] = custom_imap
-        return jsonify({"ok": True})
-    except imaplib.IMAP4.error:
-        return jsonify({"ok": False, "error": "Login failed — check your email/password or App Password."}), 401
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route("/api/logout", methods=["POST"])
-def logout():
-    session.clear()
-    return jsonify({"ok": True})
-
-# Folders to skip during scan (bulk/system folders that skew results & are slow)
 SKIP_FOLDER_KEYWORDS = [
     "trash", "deleted", "junk", "spam", "drafts", "sent",
     "archive", "all mail", "important", "starred", "bin",
@@ -802,24 +703,17 @@ def should_skip_folder(name):
     return any(kw in lower for kw in SKIP_FOLDER_KEYWORDS)
 
 def fetch_senders_from_folder(mail, folder, max_emails=2000):
-    """Fetch FROM headers from a folder, newest first, up to max_emails."""
     sender_counts = {}
     if not select_folder_readonly(mail, folder):
         return sender_counts
-
     status, data = mail.search(None, "ALL")
     if status != "OK" or not data or not data[0]:
         return sender_counts
-
     ids = data[0].split()
     if not ids:
         return sender_counts
-
-    # Take only the most recent max_emails (ids are oldest-first, so take from end)
     ids = ids[-max_emails:]
-
-    # Fetch in chunks of 500 to avoid overwhelming the server
-    CHUNK = 500
+    CHUNK = 1000
     for i in range(0, len(ids), CHUNK):
         chunk_ids = ids[i:i+CHUNK]
         id_set = b",".join(chunk_ids).decode()
@@ -838,12 +732,49 @@ def fetch_senders_from_folder(mail, folder, max_emails=2000):
                         continue
         except Exception:
             continue
-
     return sender_counts
+
+@app.route("/")
+def index():
+    return HTML_PAGE
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    data = request.json
+    email_addr  = data.get("email", "").strip()
+    password    = data.get("password", "").strip()
+    custom_imap = data.get("imap_server", "").strip() or None
+
+    if not email_addr or not password:
+        return jsonify({"ok": False, "error": "Email and password are required."}), 400
+    
+    # Basic email validation
+    if "@" not in email_addr or "." not in email_addr.split("@")[-1]:
+        return jsonify({"ok": False, "error": "Please enter a valid email address."}), 400
+
+    try:
+        mail = connect(email_addr, password, custom_imap)
+        try:
+            mail.logout()
+        except Exception:
+            pass
+        session.permanent = True
+        session["email"]       = email_addr
+        session["password"]    = password
+        session["imap_server"] = custom_imap
+        return jsonify({"ok": True})
+    except imaplib.IMAP4.error:
+        return jsonify({"ok": False, "error": "Login failed — check your email/password or App Password."}), 401
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"ok": True})
 
 @app.route("/api/senders", methods=["GET"])
 def list_senders():
-    """Scan inbox + user folders for top senders, skipping bulk/system folders."""
     if "email" not in session:
         return jsonify({"ok": False, "error": "Not logged in."}), 401
 
@@ -852,7 +783,6 @@ def list_senders():
         sender_counts = {}
         folders = get_folders(mail)
 
-        # Always scan INBOX first
         priority = [f for f in folders if f.upper() == "INBOX"]
         others   = [f for f in folders if f.upper() != "INBOX" and not should_skip_folder(f)]
         scan_order = priority + others
@@ -865,17 +795,19 @@ def list_senders():
             except Exception:
                 continue
 
-        mail.logout()
+        try:
+            mail.logout()
+        except Exception:
+            pass
 
         sorted_senders = sorted(sender_counts.items(), key=lambda x: x[1], reverse=True)
-        return jsonify({"ok": True, "senders": sorted_senders[:150]})
+        return jsonify({"ok": True, "senders": sorted_senders[:100]})
 
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/preview", methods=["POST"])
 def preview():
-    """Count emails from a sender across all folders."""
     if "email" not in session:
         return jsonify({"ok": False, "error": "Not logged in."}), 401
 
@@ -886,6 +818,8 @@ def preview():
     try:
         mail = connect(session["email"], session["password"], session.get("imap_server"))
         folders = get_folders(mail)
+        # Limit folders scanned in preview to top 20 (faster feedback)
+        folders = folders[:20]
         total = 0
 
         for folder in folders:
@@ -897,14 +831,16 @@ def preview():
             except Exception:
                 continue
 
-        mail.logout()
+        try:
+            mail.logout()
+        except Exception:
+            pass
         return jsonify({"ok": True, "count": total})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/delete", methods=["POST"])
 def delete():
-    """Delete all emails from a sender across all folders."""
     if "email" not in session:
         return jsonify({"ok": False, "error": "Not logged in."}), 401
 
@@ -924,7 +860,6 @@ def delete():
                 ids = search_from(mail, sender_query)
                 if not ids:
                     continue
-                # Mark all as deleted in one call
                 id_set = b",".join(ids).decode()
                 mail.store(id_set, "+FLAGS", "\\Deleted")
                 mail.expunge()
@@ -932,7 +867,10 @@ def delete():
             except Exception:
                 continue
 
-        mail.logout()
+        try:
+            mail.logout()
+        except Exception:
+            pass
         return jsonify({"ok": True, "deleted": total_deleted})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
