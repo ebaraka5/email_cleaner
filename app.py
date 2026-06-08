@@ -240,18 +240,25 @@ function renderSenders(list){
   for(var i=0;i<list.length;i++){
     var sender=list[i][0],count=list[i][1],idx='s'+i;
     senderStore[idx]={sender:sender,count:count};
-    html+='<div class="sender-item"><div class="sender-info"><div class="sender-name" title="'+esc(sender)+'">'+esc(sender)+'</div><div class="sender-count">'+count+' email'+(count!==1?'s':'')+' </div></div><div class="sender-actions"><button class="btn-ghost" onclick="window._selectClick(''+idx+'')">Select</button><button class="btn-danger" onclick="window._deleteClick(''+idx+'')">Delete</button></div></div>';
+    html+='<div class="sender-item"><div class="sender-info"><div class="sender-name" title="'+esc(sender)+'">'+esc(sender)+'</div><div class="sender-count">'+count+' email'+(count!==1?'s':'')+' </div></div><div class="sender-actions"><button class="btn-ghost" data-idx="'+idx+'">Select</button><button class="btn-danger" data-idx="'+idx+'">Delete</button></div></div>';
   }
   $('sender-list').innerHTML=html;
+  var selects=document.querySelectorAll('[data-idx]');
+  for(var i=0;i<selects.length;i++){
+    (function(){
+      var btn=selects[i];
+      var isDelete=btn.classList.contains('btn-danger');
+      btn.addEventListener('click',function(){
+        var idx=this.getAttribute('data-idx');
+        var data=senderStore[idx];
+        if(data){
+          if(isDelete){quickDelete(data.sender,data.count)}
+          else{prefill(data.sender)}
+        }
+      });
+    })();
+  }
 }
-
-window._selectClick=function(idx){
-  if(senderStore[idx]){prefill(senderStore[idx].sender)}
-};
-
-window._deleteClick=function(idx){
-  if(senderStore[idx]){quickDelete(senderStore[idx].sender,senderStore[idx].count)}
-};
 
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 
